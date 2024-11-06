@@ -11,6 +11,18 @@ import pdfplumber
 # Load environment variables
 load_dotenv()
 
+# Get API key and initialize Anthropic client
+api_key = os.getenv('ANTHROPIC_API_KEY')
+if not api_key:
+    st.error("No Anthropic API key found. Please make sure ANTHROPIC_API_KEY is set in your .env file.")
+    st.stop()
+
+try:
+    client = anthropic.Anthropic(api_key=api_key)
+except Exception as e:
+    st.error(f"Error initializing Anthropic client: {str(e)}")
+    st.stop()
+
 # Configure page
 st.set_page_config(
     page_title="Script QA Assistant",
@@ -83,30 +95,41 @@ def check_scene_content(text):
     content_flags = {
         'sex/nudity': {
             'status': False,
-            'terms': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss'],
+            'keywords': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle'],
             'evidence': []
         },
         'violence': {
             'status': False,
-            'terms': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot'],
+            'keywords': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet'],
             'evidence': []
         },
         'profanity': {
             'status': False,
-            'terms': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard'],
+            'keywords': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike'],
             'evidence': []
         },
         'alcohol/drugs': {
             'status': False,
-            'terms': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette'],
+            'keywords': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette'],
             'evidence': []
         },
         'frightening': {
             'status': False,
-            'terms': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death'],
+            'keywords': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death'],
             'evidence': []
         }
     }
+    
+    text_lower = text.lower()
+    for flag, data in content_flags.items():
+        for keyword in data['keywords']:
+            if keyword in text_lower:
+                data['status'] = True
+                if keyword not in data['evidence']:
+                    data['evidence'].append(keyword)
+    
+    return content_flags
+
     
     text_lower = text.lower()
     for flag, data in content_flags.items():
