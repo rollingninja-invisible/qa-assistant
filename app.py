@@ -11,49 +11,22 @@ import pdfplumber
 # Load environment variables
 load_dotenv()
 
-# Validation rules dictionary
-VALIDATION_RULES = {
-    'Scene #': "Must match script scene numbering exactly",
-    'Has Multiple Setups': "True if scene changes location/time within the scene",
-    'INT/EXT': "Must match script header exactly (INT. or EXT.)",
-    'Full scene header': "Must match script exactly, excluding scene number",
-    'Scene start page (PDF)': "Must match actual PDF page number",
-    'Scene end page (PDF)': "Must match actual PDF page number",
-    'Scene start page (Script)': "Must match actual script page number",
-    'Scene end page (Script)': "Must match actual script page number",
-    'Has interior?': "True if scene header contains INT.",
-    'Has exterior?': "True if scene header contains EXT.",
-    'Location': "Must match location from script header",
-    'Set': "Must list all distinct locations mentioned in scene",
-    'Time (from header)': "Must match time designation from script header exactly",
-    'Time of Day': "Must be derived from script context and header",
-    'Is night?': "True if scene occurs at night based on header/context",
-    'Scene length': "Must match actual length in eighths based on script",
-    'Characters Present': "Must list all named characters with dialogue or action",
-    'Vehicles Present': "Must list all vehicles mentioned in scene",
-    'Animals Present': "Must list all animals mentioned in scene",
-    'Countries': "Must list all countries mentioned in scene",
-    'Contains sex/nudity?': "True if scene contains sexual content or nudity",
-    'Contains violence?': "True if scene contains violent content/actions",
-    'Contains profanity?': "True if scene contains profanity/strong language",
-    'Contains alcohol/drugs/smoking?': "True if scene mentions substance use",
-    'Contains frightening/intense moment?': "True if scene has intense/frightening content",
-    'Notes': "Must accurately describe key production considerations"
-}
-
 def process_pdf(pdf_file):
     """Extract text from PDF maintaining page numbers"""
     text = ""
+    page_mapping = {}
     try:
         with pdfplumber.open(pdf_file) as pdf:
             for page_num, page in enumerate(pdf.pages, 1):
                 extracted_text = page.extract_text()
                 if extracted_text:
                     text += f"\n[Page {page_num}]\n{extracted_text}"
+                    # Store text chunks with their page numbers
+                    page_mapping[page_num] = extracted_text
     except Exception as e:
         st.error(f"Error processing PDF: {str(e)}")
-        return None
-    return text
+        return None, None
+    return text, page_mapping
 
 def extract_scene_info(text):
     """Extract scene information from script text"""
@@ -71,157 +44,180 @@ def extract_scene_info(text):
 
 def extract_characters(text):
     """Extract unique character names from scene text"""
-    character_pattern = r'\n([A-Z][A-Z\s]+)(?:\s*\(.*?\))?\n'
-    characters = set(re.findall(character_pattern, text))
+    character_pattern = r'\n([A-Z][A-Z\s]+)(?:\s*\(.*?\))?\s*\n(?=\S)'
+    characters = set()
+    for match in re.finditer(character_pattern, text):
+        char = ' '.join(match.group(1).split())
+        # Skip stage directions and common words
+        if not any(word in char for word in ['SMASH', 'CUT', 'FADE', 'DISSOLVE', 'CONTINUED', 'CHYRON']):
+            if not char in {'TO', 'AND', 'THE', 'WITH', 'AS', 'WE', 'SCENE', 'INT', 'EXT'}:
+                characters.add(char)
+    return sorted(list(characters))
+
+def get_scene_length(text):
+    """Calculate scene length in eighths"""
+    # Basic estimation - can be improved based on your specific needs
+    lines = len(text.split('\n'))
+    eighths = max(1, round(lines / 8))  # Minimum 1/8
+    return f"{eighths}/8"
+def validate_scene(scene_data, qa_row, page_mapping):
+    """Comprehensive scene validation"""
+    validations = {}
+    scene_text = scene_data.get('content', '')
+    scene_info = extract_scene_info(scene_text)[0] if extract_scene_info(scene_text) else {}
     
-    cleaned_characters = set()
-    for char in characters:
-        char = ' '.join(char.split())
-        if any(word in char for word in ['SMASH', 'CUT', 'FADE', 'DISSOLVE', 'CONTINUED']):
-            continue
-        if char in {'TO', 'AND', 'THE', 'WITH', 'AS', 'WE'}:
-            continue
-        cleaned_characters.add(char)
-    
-    return sorted(list(cleaned_characters))
+    # Basic Information
+    validations['Scene Number'] = {
+        'current': str(qa_row.get('Scene #', '')),
+        'correct': scene_info.get('scene_number', ''),
+        'status': 'correct' if str(qa_row.get('Scene #', '')) == scene_info.get('scene_number', '') else 'incorrect'
+    }
 
-def validate_scene(scene_data, qa_row):
-    """Validate each cell in the QA row against script data"""
-    validations = []
-    
-    # Extract scene information
-    scene_info = extract_scene_info(scene_data['content'])[0]
-    characters = extract_characters(scene_data['content'])
-    
-    # Basic Information Validation
-    if scene_info['scene_number'] != str(qa_row.get('Scene #', '')):
-        validations.append({
-            'field': 'Scene #',
-            'current': qa_row.get('Scene #', ''),
-            'correct': scene_info['scene_number'],
-            'status': 'Error',
-            'correction': f"Update to {scene_info['scene_number']}"
-        })
+    # Multiple Setups
+    location_changes = len(re.findall(r'(INT\.|EXT\.)', scene_text))
+    has_multiple = location_changes > 1 or 'CONTINUOUS' in scene_text
+    validations['Has Multiple Setups'] = {
+        'current': str(qa_row.get('Has Multiple Setups', '')),
+        'correct': 'YES' if has_multiple else 'NO',
+        'status': 'correct' if (str(qa_row.get('Has Multiple Setups', '')).upper() == ('YES' if has_multiple else 'NO')) else 'incorrect'
+    }
 
-    # INT/EXT Validation
-    script_int_ext = scene_info['int_ext']
-    qa_int_ext = qa_row.get('INT/EXT', '')
-    if script_int_ext != qa_int_ext:
-        validations.append({
-            'field': 'INT/EXT',
-            'current': qa_int_ext,
-            'correct': script_int_ext,
-            'status': 'Error',
-            'correction': f"Change to {script_int_ext}"
-        })
+    # INT/EXT
+    validations['INT/EXT'] = {
+        'current': str(qa_row.get('INT/EXT', '')),
+        'correct': scene_info.get('int_ext', ''),
+        'status': 'correct' if str(qa_row.get('INT/EXT', '')) == scene_info.get('int_ext', '') else 'incorrect'
+    }
 
-    # Header Validation
-    script_header = scene_info['full_header']
-    qa_header = qa_row.get('Full scene header', '')
-    if script_header != qa_header:
-        validations.append({
-            'field': 'Full scene header',
-            'current': qa_header,
-            'correct': script_header,
-            'status': 'Error',
-            'correction': "Update to match script header exactly"
-        })
+    # Scene Header
+    validations['Full scene header'] = {
+        'current': str(qa_row.get('Full scene header', '')),
+        'correct': scene_info.get('full_header', ''),
+        'status': 'correct' if str(qa_row.get('Full scene header', '')) == scene_info.get('full_header', '') else 'incorrect'
+    }
 
-    # Interior/Exterior Validation
-    has_interior = 'INT' in script_int_ext
-    has_exterior = 'EXT' in script_int_ext
-    if str(qa_row.get('Has interior?', '')).lower() != str(has_interior).lower():
-        validations.append({
-            'field': 'Has interior?',
-            'current': qa_row.get('Has interior?', ''),
-            'correct': has_interior,
-            'status': 'Error',
-            'correction': f"Change to {has_interior}"
-        })
-    if str(qa_row.get('Has exterior?', '')).lower() != str(has_exterior).lower():
-        validations.append({
-            'field': 'Has exterior?',
-            'current': qa_row.get('Has exterior?', ''),
-            'correct': has_exterior,
-            'status': 'Error',
-            'correction': f"Change to {has_exterior}"
-        })
+    # Interior/Exterior Settings
+    is_int = 'INT' in scene_info.get('int_ext', '')
+    is_ext = 'EXT' in scene_info.get('int_ext', '')
+    validations['Has interior?'] = {
+        'current': str(qa_row.get('Has interior?', '')),
+        'correct': 'YES' if is_int else 'NO',
+        'status': 'correct' if str(qa_row.get('Has interior?', '')).upper() == ('YES' if is_int else 'NO') else 'incorrect'
+    }
+    validations['Has exterior?'] = {
+        'current': str(qa_row.get('Has exterior?', '')),
+        'correct': 'YES' if is_ext else 'NO',
+        'status': 'correct' if str(qa_row.get('Has exterior?', '')).upper() == ('YES' if is_ext else 'NO') else 'incorrect'
+    }
 
-    # Time Validation
-    script_time = scene_info['time']
-    qa_time = qa_row.get('Time (from header)', '')
-    if script_time != qa_time:
-        validations.append({
-            'field': 'Time (from header)',
-            'current': qa_time,
-            'correct': script_time,
-            'status': 'Error',
-            'correction': f"Change to {script_time}"
-        })
+    # Location and Set
+    validations['Location'] = {
+        'current': str(qa_row.get('Location', '')),
+        'correct': scene_info.get('location', ''),
+        'status': 'correct' if str(qa_row.get('Location', '')) == scene_info.get('location', '') else 'incorrect'
+    }
 
-    # Night Scene Validation
-    is_night = any(word in script_time.upper() for word in ['NIGHT', 'MIDDLE OF THE NIGHT'])
-    if str(qa_row.get('Is night?', '')).lower() != str(is_night).lower():
-        validations.append({
-            'field': 'Is night?',
-            'current': qa_row.get('Is night?', ''),
-            'correct': is_night,
-            'status': 'Error',
-            'correction': f"Change to {is_night}"
-        })
+    # Time Information
+    is_night = any(word in scene_info.get('time', '').upper() for word in ['NIGHT', 'MIDDLE OF THE NIGHT'])
+    validations['Time (from header)'] = {
+        'current': str(qa_row.get('Time (from header)', '')),
+        'correct': scene_info.get('time', ''),
+        'status': 'correct' if str(qa_row.get('Time (from header)', '')) == scene_info.get('time', '') else 'incorrect'
+    }
+    validations['Is night?'] = {
+        'current': str(qa_row.get('Is night?', '')),
+        'correct': 'YES' if is_night else 'NO',
+        'status': 'correct' if str(qa_row.get('Is night?', '')).upper() == ('YES' if is_night else 'NO') else 'incorrect'
+    }
 
-    # Characters Validation
-    qa_characters = set(char.strip() for char in str(qa_row.get('Characters Present', '')).split(',') if char.strip())
-    script_characters = set(characters)
-    missing_chars = script_characters - qa_characters
-    extra_chars = qa_characters - script_characters
-    if missing_chars or extra_chars:
-        validations.append({
-            'field': 'Characters Present',
-            'current': ', '.join(sorted(qa_characters)),
-            'correct': ', '.join(sorted(script_characters)),
-            'status': 'Error',
-            'correction': f"Add missing characters: {', '.join(sorted(missing_chars)) if missing_chars else 'None'}\nRemove extra characters: {', '.join(sorted(extra_chars)) if extra_chars else 'None'}"
-        })
+    # Characters
+    script_characters = extract_characters(scene_text)
+    qa_characters = [char.strip() for char in str(qa_row.get('Characters Present', '')).split(',') if char.strip()]
+    missing_chars = set(script_characters) - set(qa_characters)
+    extra_chars = set(qa_characters) - set(script_characters)
+    validations['Characters Present'] = {
+        'current': ', '.join(qa_characters),
+        'correct': ', '.join(script_characters),
+        'status': 'correct' if not (missing_chars or extra_chars) else 'incorrect',
+        'missing': sorted(list(missing_chars)),
+        'extra': sorted(list(extra_chars))
+    }
 
-    # Content Flags Validation
+    # Content Flags
     content_flags = {
-        'Contains sex/nudity?': lambda x: any(word in x.lower() for word in ['nude', 'naked', 'sex', 'love scene', 'kiss']),
-        'Contains violence?': lambda x: any(word in x.lower() for word in ['kill', 'shot', 'blood', 'fight', 'punch', 'hit']),
+        'Contains sex/nudity?': lambda x: any(word in x.lower() for word in ['nude', 'naked', 'sex', 'love scene', 'kiss', 'motorboat']),
+        'Contains violence?': lambda x: any(word in x.lower() for word in ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'die', 'dead']),
         'Contains profanity?': lambda x: any(word in x.lower() for word in ['fuck', 'shit', 'damn', 'hell', 'ass']),
-        'Contains alcohol/drugs/smoking?': lambda x: any(word in x.lower() for word in ['drink', 'drunk', 'beer', 'wine', 'smoke']),
-        'Contains frightening/intense moment?': lambda x: any(word in x.lower() for word in ['scream', 'terror', 'horror', 'frighten', 'intense'])
+        'Contains alcohol/drugs/smoking?': lambda x: any(word in x.lower() for word in ['drink', 'drunk', 'beer', 'wine', 'smoke', 'mai tai', 'gimlet']),
+        'Contains frightening/intense moment?': lambda x: any(word in x.lower() for word in ['scream', 'terror', 'horror', 'frighten', 'intense', 'kill', 'die', 'dead'])
     }
 
     for flag, check_func in content_flags.items():
-        script_has_content = check_func(scene_data['content'])
-        qa_has_content = str(qa_row.get(flag, '')).lower() == 'true'
-        if script_has_content != qa_has_content:
-            validations.append({
-                'field': flag,
-                'current': qa_has_content,
-                'correct': script_has_content,
-                'status': 'Error',
-                'correction': f"Change to {script_has_content}"
-            })
+        script_has_content = check_func(scene_text)
+        qa_has_content = str(qa_row.get(flag, '')).upper() == 'YES'
+        validations[flag] = {
+            'current': 'YES' if qa_has_content else 'NO',
+            'correct': 'YES' if script_has_content else 'NO',
+            'status': 'correct' if qa_has_content == script_has_content else 'incorrect'
+        }
 
     return validations
-
 def format_validation_report(scene_number, validations):
-    """Format validation results into a readable report"""
-    report = f"\n### SCENE {scene_number} ANALYSIS:\n\n"
+    """Format validation results into a clean, readable report"""
+    report = f"\nSCENE {scene_number} ANALYSIS:\n"
     
-    if not validations:
-        report += "✅ All fields verified correct\n"
+    # Check if any corrections are needed
+    needs_corrections = any(v['status'] == 'incorrect' for v in validations.values())
+    if not needs_corrections:
+        report += "✓ All fields verified correct\n"
         return report
+
+    report += "Required Updates:\n"
     
-    report += "🚫 The following fields need correction:\n\n"
-    for v in validations:
-        report += f"**{v['field']}**\n"
-        report += f"- Current Value: {v['current']}\n"
-        report += f"- Correct Value: {v['correct']}\n"
-        report += f"- Correction Needed: {v['correction']}\n\n"
-    
+    # Basic Information
+    if validations['Scene Number']['status'] == 'incorrect':
+        report += f"1. Scene Number\n   - Should be: {validations['Scene Number']['correct']}\n"
+
+    # Multiple Setups
+    if validations['Has Multiple Setups']['status'] == 'incorrect':
+        report += f"2. Has Multiple Setups\n   - Current: {validations['Has Multiple Setups']['current']}\n   - Should be: {validations['Has Multiple Setups']['correct']}\n"
+
+    # INT/EXT and Header
+    if validations['INT/EXT']['status'] == 'incorrect':
+        report += f"3. INT/EXT\n   - Current: {validations['INT/EXT']['current']}\n   - Should be: {validations['INT/EXT']['correct']}\n"
+
+    if validations['Full scene header']['status'] == 'incorrect':
+        report += f"4. Full scene header\n   - Current: {validations['Full scene header']['current']}\n   - Should be: \"{validations['Full scene header']['correct']}\"\n"
+
+    # Interior/Exterior Settings
+    if validations['Has interior?']['status'] == 'incorrect' or validations['Has exterior?']['status'] == 'incorrect':
+        report += "5. Interior/Exterior Settings\n"
+        if validations['Has interior?']['status'] == 'incorrect':
+            report += f"   - Set \"Has interior?\" to: {validations['Has interior?']['correct']}\n"
+        if validations['Has exterior?']['status'] == 'incorrect':
+            report += f"   - Set \"Has exterior?\" to: {validations['Has exterior?']['correct']}\n"
+
+    # Characters
+    if validations['Characters Present']['status'] == 'incorrect':
+        report += "6. Characters Present\n"
+        if validations['Characters Present']['missing']:
+            report += f"   - Add: {', '.join(validations['Characters Present']['missing'])}\n"
+        if validations['Characters Present']['extra']:
+            report += f"   - Remove: {', '.join(validations['Characters Present']['extra'])}\n"
+
+    # Content Flags
+    content_flags_need_update = False
+    content_flag_updates = []
+    for flag in ['Contains sex/nudity?', 'Contains violence?', 'Contains profanity?', 
+                 'Contains alcohol/drugs/smoking?', 'Contains frightening/intense moment?']:
+        if validations[flag]['status'] == 'incorrect':
+            content_flags_need_update = True
+            content_flag_updates.append(f"   - {flag.replace('?', '')}")
+
+    if content_flags_need_update:
+        report += "\n7. Content Flags (Change to YES):\n"
+        report += '\n'.join(content_flag_updates) + '\n'
+
     return report
 
 # Configure Streamlit page
@@ -263,9 +259,9 @@ with st.sidebar:
     if script_file and qa_file and st.button("Process Documents"):
         with st.spinner("Processing documents..."):
             # Process script
-            script_text = process_pdf(script_file)
+            script_text, page_mapping = process_pdf(script_file)
             if script_text:
-                st.session_state.script_content = {'content': script_text}
+                st.session_state.script_content = {'content': script_text, 'pages': page_mapping}
                 
                 # Process QA sheet
                 try:
@@ -303,13 +299,13 @@ if prompt := st.chat_input("Request analysis or ask about specific scenes"):
                 full_report = []
                 for qa_row in st.session_state.qa_content:
                     scene_num = qa_row.get('Scene #', '')
-                    validations = validate_scene(st.session_state.script_content, qa_row)
+                    validations = validate_scene(st.session_state.script_content, qa_row, 
+                                              st.session_state.script_content.get('pages', {}))
                     report = format_validation_report(scene_num, validations)
                     full_report.append(report)
                 
                 response = "\n".join(full_report)
             else:
-                # Use Claude for specific questions
                 response = client.messages.create(
                     model="claude-3-sonnet-20240229",
                     max_tokens=4000,
