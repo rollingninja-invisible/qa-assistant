@@ -1,0 +1,8 @@
+streamlit
+anthropic
+python-dotenv
+pdfplumber
+pandas
+langchain
+langchain-community
+unstructured
