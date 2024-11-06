@@ -55,11 +55,26 @@ def extract_scene_info(text):
     return scenes
 
 def extract_characters(text):
-    """Extract character names from scene text"""
+    """Extract unique character names from scene text with better formatting"""
     # Look for character names in ALL CAPS before dialogue
     character_pattern = r'\n([A-Z][A-Z\s]+)(?:\s*\(.*?\))?\n'
     characters = set(re.findall(character_pattern, text))
-    return list(characters)
+    
+    # Clean up character names
+    cleaned_characters = set()
+    for char in characters:
+        # Remove extra whitespace and newlines
+        char = ' '.join(char.split())
+        # Skip stage directions that got caught
+        if any(word in char for word in ['SMASH', 'CUT', 'FADE', 'DISSOLVE', 'CONTINUED']):
+            continue
+        # Skip if entire name is common stage direction
+        if char in {'TO', 'AND', 'THE', 'WITH', 'AS', 'WE'}:
+            continue
+        cleaned_characters.add(char)
+    
+    return sorted(list(cleaned_characters))
+
 
 def process_script(file_content):
     """Process script content and extract structured information"""
@@ -138,21 +153,23 @@ def validate_qa_row(scene_data, qa_row):
             'error': 'Scene header does not match script exactly'
         })
     
-    # Check characters
-    script_characters = extract_characters(scene_data['content'])
-    qa_characters = str(qa_row.get('Characters Present', '')).split(',')
-    qa_characters = [char.strip() for char in qa_characters if char.strip()]
-    missing_chars = set(script_characters) - set(qa_characters)
-    extra_chars = set(qa_characters) - set(script_characters)
+    # Check characters with improved comparison
+    script_characters = set(extract_characters(scene_data['content']))
+    qa_characters = set(char.strip() for char in str(qa_row.get('Characters Present', '')).split(',') if char.strip())
+    
+    missing_chars = script_characters - qa_characters
+    extra_chars = qa_characters - script_characters
+    
     if missing_chars or extra_chars:
         discrepancies.append({
             'field': 'Characters Present',
-            'script_value': ', '.join(script_characters),
-            'qa_value': ', '.join(qa_characters),
-            'error': f'Missing characters: {missing_chars if missing_chars else "None"}, Extra characters: {extra_chars if extra_chars else "None"}'
+            'script_value': ', '.join(sorted(script_characters)),
+            'qa_value': ', '.join(sorted(qa_characters)),
+            'error': f'Missing from QA sheet: {", ".join(sorted(missing_chars)) if missing_chars else "None"}\nExtra in QA sheet: {", ".join(sorted(extra_chars)) if extra_chars else "None"}'
         })
     
     return discrepancies
+
 
 def format_analysis_report(scene_number, discrepancies):
     """Format the analysis results into a readable report"""
