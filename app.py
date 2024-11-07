@@ -21,12 +21,6 @@ if not api_key:
     st.error("No Anthropic API key found. Please make sure ANTHROPIC_API_KEY is set in your .env file.")
     st.stop()
 
-try:
-    client = anthropic.Anthropic(api_key=api_key)
-except Exception as e:
-    st.error(f"Error initializing Anthropic client: {str(e)}")
-    st.stop()
-
 # Configure page
 st.set_page_config(
     page_title="Script QA Assistant",
