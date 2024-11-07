@@ -125,7 +125,6 @@ if script_file and qa_file:
                             st.code(traceback.format_exc())
                 else:
                     st.error("Error processing script PDF")
-
     with col2:
         if st.button("Reset Analysis", type="secondary"):
             st.session_state.messages = []
