@@ -63,7 +63,7 @@ def extract_scene_header(text):
 def split_into_scenes(script_text):
     """Split script text into individual scenes"""
     # Adjust the pattern to match your script's scene headers
-    scene_pattern = r'(\d+[A-Z]?)\s+(INT\.|EXT\.)\s+.*?\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT)\s+-\s+\d+[A-Z]?'
+    scene_pattern = r'(\d+[A-Z]?)\s+(INT\.|EXT\.)\s+.*?\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT)'
     scenes = {}
     
     # Split text into sections by scene numbers
