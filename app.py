@@ -465,7 +465,7 @@ if script_file and qa_file:
                         with tab2:
                             st.markdown("### Analysis Summary")
                             total_scenes = len(qa_rows)
-                            scenes_with_issues = sum(1 for row in qa_rows if scenes.get(str(row.get('Scene #', '')).strip()))
+                            scenes with issues = sum(1 for row in qa_rows if scenes.get(str(row.get('Scene #', '')).strip()))
                             st.metric("Total Scenes Processed", total_scenes)
                             st.metric("Scenes with Issues", scenes_with_issues)
                         
