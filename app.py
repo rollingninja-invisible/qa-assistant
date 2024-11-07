@@ -7,6 +7,7 @@ import os
 import re
 import pandas as pd
 import pdfplumber
+import traceback
 
 # Load environment variables
 load_dotenv()
@@ -29,7 +30,6 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
-
 def process_pdf(pdf_file):
     """Extract text from PDF maintaining page numbers"""
     text = ""
@@ -59,6 +59,38 @@ def extract_scene_header(text):
             'full_header': match.group(0)
         }
     return None
+
+def split_into_scenes(script_text):
+    """Split script text into individual scenes"""
+    # More specific pattern to match scene headers
+    scene_pattern = r'(\d+)\s+(INT\.|EXT\.)\s+([^\n]+)'
+    scenes = {}
+    current_scene_text = ""
+    current_scene_num = None
+    
+    # Split text into lines and process
+    lines = script_text.split('\n')
+    for line in lines:
+        # Check if line starts a new scene
+        match = re.match(scene_pattern, line)
+        if match:
+            # Save previous scene if exists
+            if current_scene_num:
+                scenes[current_scene_num] = current_scene_text.strip()
+            
+            # Start new scene
+            current_scene_num = match.group(1)
+            current_scene_text = line + "\n"
+        else:
+            # Add line to current scene if one exists
+            if current_scene_num:
+                current_scene_text += line + "\n"
+    
+    # Save last scene
+    if current_scene_num:
+        scenes[current_scene_num] = current_scene_text.strip()
+    
+    return scenes
 
 def extract_scene_characters(text):
     """Extract only characters that actually appear in the scene"""
@@ -90,27 +122,6 @@ def extract_scene_characters(text):
                 characters.add(name)
     
     return sorted(list(characters))
-
-def split_into_scenes(script_text):
-    """Split script text into individual scenes"""
-    # First, find all scene headers
-    scene_pattern = r'(\d+)\s+((?:INT\.|EXT\.)[^\n]+)'
-    scene_matches = list(re.finditer(scene_pattern, script_text))
-    
-    scenes = {}
-    for i in range(len(scene_matches)):
-        start = scene_matches[i].start()
-        # If this is the last scene, get text until the end
-        if i == len(scene_matches) - 1:
-            end = len(script_text)
-        else:
-            end = scene_matches[i + 1].start()
-            
-        scene_text = script_text[start:end]
-        scene_num = scene_matches[i].group(1)
-        scenes[scene_num] = scene_text.strip()
-    
-    return scenes
 def check_scene_content(text):
     """Analyze scene content for various flags"""
     content_flags = {
@@ -148,16 +159,6 @@ def check_scene_content(text):
                 data['status'] = True
                 if keyword not in data['evidence']:
                     data['evidence'].append(keyword)
-    
-    return content_flags
-
-    
-    text_lower = text.lower()
-    for flag, data in content_flags.items():
-        for term in data['terms']:
-            if term in text_lower:
-                data['status'] = True
-                data['evidence'].append(term)
     
     return content_flags
 
@@ -238,9 +239,13 @@ def validate_scene(scene_text, qa_row):
         }
 
     return validations
+
 def format_validation_report(scene_number, validations):
     """Format validation results into a readable report"""
     report = f"\nSCENE {scene_number} ANALYSIS:\n"
+    
+    if "error" in validations:
+        return report + f"Error: {validations['error']}\n"
     
     # Check if any corrections are needed
     needs_corrections = False
@@ -302,7 +307,6 @@ def format_validation_report(scene_number, validations):
         report += '\n'.join(flag_updates)
 
     return report
-
 # Initialize the AI
 client = anthropic.Anthropic()
 
@@ -316,10 +320,10 @@ if "qa_content" not in st.session_state:
 
 # Main interface
 st.title("Script QA Assistant")
-st.sidebar.header("Settings")
 
 # File upload section
 with st.sidebar:
+    st.header("Settings")
     script_file = st.file_uploader(
         "Upload Script PDF",
         type=["pdf"],
@@ -331,53 +335,74 @@ with st.sidebar:
         type=["csv"],
         help="Upload the QA sheet in CSV format"
     )
-    
-    if script_file and qa_file and st.button("Process Documents"):
-        with st.spinner("Processing documents..."):
-            # Process script
-            script_text, page_mapping = process_pdf(script_file)
-            if script_text:
-                try:
-                    # Split script into scenes
-                    scenes = split_into_scenes(script_text)
-                    st.session_state.script_content = scenes
-                    
-                    # Process QA sheet
-                    qa_data = pd.read_csv(qa_file)
-                    st.session_state.qa_content = qa_data.to_dict('records')
-                    
-                    # Analyze all scenes
-                    full_report = []
-                    
-                    # Debug info
-                    st.info(f"Found {len(scenes)} scenes")
-                    st.info(f"Scene numbers found: {', '.join(sorted(scenes.keys()))}")
-                    
-                    for qa_row in qa_data.to_dict('records'):
-                        scene_num = str(qa_row.get('Scene #', '')).strip()
-                        scene_content = scenes.get(scene_num)
-                        
-                        if scene_content:
-                            validations = validate_scene(scene_content, qa_row)
-                            report = format_validation_report(scene_num, validations)
-                            full_report.append(report)
-                        else:
-                            full_report.append(f"\nSCENE {scene_num} ANALYSIS:\nError: Scene not found in script\n")
-                    
-                    # Display the full report
-                    st.markdown("### Complete Analysis Report")
-                    st.markdown("\n".join(full_report))
-                    
-                    st.success(f"Processed {len(scenes)} scenes successfully!")
-                except Exception as e:
-                    st.error(f"Error processing documents: {str(e)}")
-                    import traceback
-                    st.error(traceback.format_exc())
-            else:
-                st.error("Error processing script PDF")
 
+# Main content area
+if script_file and qa_file:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("Process Documents", type="primary", key="process_docs"):
+            with st.spinner("Processing documents..."):
+                # Process script
+                script_text, page_mapping = process_pdf(script_file)
+                if script_text:
+                    try:
+                        # Split script into scenes
+                        scenes = split_into_scenes(script_text)
+                        st.session_state.script_content = scenes
+                        
+                        # Process QA sheet
+                        qa_data = pd.read_csv(qa_file)
+                        qa_rows = qa_data.to_dict('records')
+                        st.session_state.qa_content = qa_rows
+                        
+                        # Debug information in expander
+                        with st.expander("Analysis Details"):
+                            st.info(f"Found {len(scenes)} scenes")
+                            st.text(f"Scene numbers: {', '.join(sorted(scenes.keys()))}")
+                        
+                        # Create tabs for different views
+                        tab1, tab2 = st.tabs(["Scene Analysis", "Summary"])
+                        
+                        with tab1:
+                            st.markdown("### Scene-by-Scene Analysis")
+                            for qa_row in qa_rows:
+                                scene_num = str(qa_row.get('Scene #', '')).strip()
+                                scene_content = scenes.get(scene_num)
+                                
+                                # Create expander for each scene
+                                with st.expander(f"Scene {scene_num}", expanded=True):
+                                    if scene_content:
+                                        validations = validate_scene(scene_content, qa_row)
+                                        report = format_validation_report(scene_num, validations)
+                                        st.markdown(report)
+                                    else:
+                                        st.markdown(f"⚠️ Scene not found in script")
+                        
+                        with tab2:
+                            st.markdown("### Analysis Summary")
+                            total_scenes = len(qa_rows)
+                            scenes_with_issues = sum(1 for row in qa_rows if scenes.get(str(row.get('Scene #', '')).strip()))
+                            st.metric("Total Scenes Processed", total_scenes)
+                            st.metric("Scenes with Issues", scenes_with_issues)
+                        
+                        st.success(f"Analysis complete! Processed {len(scenes)} scenes.")
+                        
+                    except Exception as e:
+                        st.error(f"Error processing documents: {str(e)}")
+                        with st.expander("Error Details"):
+                            st.code(traceback.format_exc())
+                else:
+                    st.error("Error processing script PDF")
+
+    with col2:
+        if st.button("Reset Analysis", type="secondary"):
+            st.session_state.messages = []
+            st.session_state.script_content = None
+            st.session_state.qa_content = None
+            st.rerun()
 
 # Chat interface for follow-up questions
+st.markdown("---")
 st.markdown("### Ask Questions About the Analysis")
 st.markdown("You can ask specific questions about scenes or discrepancies.")
 
@@ -407,10 +432,3 @@ if prompt := st.chat_input("Ask about specific scenes or issues"):
             st.session_state.messages.append(
                 {"role": "assistant", "content": response}
             )
-
-# Add a reset button
-if st.sidebar.button("Reset Analysis"):
-    st.session_state.messages = []
-    st.session_state.script_content = None
-    st.session_state.qa_content = None
-    st.success("Analysis reset. Please upload new documents.")
