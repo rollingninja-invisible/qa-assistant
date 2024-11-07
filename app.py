@@ -250,6 +250,20 @@ def check_scene_content(text):
     return content_flags
 
 
+def extract_scene_header(text):
+    """Extract scene header information"""
+    scene_pattern = r"(\d+)\s+(INT\.|EXT\.)\s+(.*?)\s*-\s*(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT)"
+    match = re.search(scene_pattern, text)
+    if match:
+        return {
+            "scene_number": match.group(1),
+            "int_ext": match.group(2).strip("."),
+            "location": match.group(3).strip(),
+            "time": match.group(4),
+            "full_header": match.group(0),
+        }
+    return None
+
 def validate_scene(scene_text, qa_row):
     """Validate scene against QA sheet data"""
     validations = {}
