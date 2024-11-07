@@ -90,6 +90,27 @@ def extract_scene_characters(text):
                 characters.add(name)
     
     return sorted(list(characters))
+
+def split_into_scenes(script_text):
+    """Split script text into individual scenes"""
+    # First, find all scene headers
+    scene_pattern = r'(\d+)\s+((?:INT\.|EXT\.)[^\n]+)'
+    scene_matches = list(re.finditer(scene_pattern, script_text))
+    
+    scenes = {}
+    for i in range(len(scene_matches)):
+        start = scene_matches[i].start()
+        # If this is the last scene, get text until the end
+        if i == len(scene_matches) - 1:
+            end = len(script_text)
+        else:
+            end = scene_matches[i + 1].start()
+            
+        scene_text = script_text[start:end]
+        scene_num = scene_matches[i].group(1)
+        scenes[scene_num] = scene_text.strip()
+    
+    return scenes
 def check_scene_content(text):
     """Analyze scene content for various flags"""
     content_flags = {
@@ -316,24 +337,28 @@ with st.sidebar:
             # Process script
             script_text, page_mapping = process_pdf(script_file)
             if script_text:
-                st.session_state.script_content = script_text
-                
                 try:
+                    # Split script into scenes
+                    scenes = split_into_scenes(script_text)
+                    st.session_state.script_content = scenes
+                    
                     # Process QA sheet
                     qa_data = pd.read_csv(qa_file)
                     st.session_state.qa_content = qa_data.to_dict('records')
                     
-                    # Automatically analyze all scenes
+                    # Analyze all scenes
                     full_report = []
-                    scenes = re.split(r'\n\d+\s+(?:INT\.|EXT\.)', script_text)
-                    scenes = [f"1 {scene}" if i == 0 else f"INT.{scene}" for i, scene in enumerate(scenes) if scene.strip()]
+                    
+                    # Debug info
+                    st.info(f"Found {len(scenes)} scenes")
+                    st.info(f"Scene numbers found: {', '.join(sorted(scenes.keys()))}")
                     
                     for qa_row in qa_data.to_dict('records'):
                         scene_num = str(qa_row.get('Scene #', '')).strip()
-                        matching_scene = next((s for s in scenes if s.startswith(scene_num + " ")), None)
+                        scene_content = scenes.get(scene_num)
                         
-                        if matching_scene:
-                            validations = validate_scene(matching_scene, qa_row)
+                        if scene_content:
+                            validations = validate_scene(scene_content, qa_row)
                             report = format_validation_report(scene_num, validations)
                             full_report.append(report)
                         else:
@@ -343,11 +368,14 @@ with st.sidebar:
                     st.markdown("### Complete Analysis Report")
                     st.markdown("\n".join(full_report))
                     
-                    st.success("Documents processed successfully!")
+                    st.success(f"Processed {len(scenes)} scenes successfully!")
                 except Exception as e:
-                    st.error(f"Error processing QA sheet: {str(e)}")
+                    st.error(f"Error processing documents: {str(e)}")
+                    import traceback
+                    st.error(traceback.format_exc())
             else:
                 st.error("Error processing script PDF")
+
 
 # Chat interface for follow-up questions
 st.markdown("### Ask Questions About the Analysis")
