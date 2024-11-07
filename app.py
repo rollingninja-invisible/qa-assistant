@@ -56,8 +56,11 @@ def process_csv(csv_file):
         return None
     return text
 
+script_file = st.file_uploader("Upload Script File", type=["pdf", "csv"])
+qa_file = st.file_uploader("Upload QA File", type=["csv"])
+
 # In the main content area
-if script_file and qa_file:
+if script_file is not None and qa_file is not None:
     col1, col2 = st.columns([3, 1])
     with col1:
         if st.button("Process Documents", type="primary", key="process_docs"):
