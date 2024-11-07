@@ -63,32 +63,26 @@ def extract_scene_header(text):
 def split_into_scenes(script_text):
     """Split script text into individual scenes"""
     # More specific pattern to match scene headers
-    scene_pattern = r'(\d+)\s+(INT\.|EXT\.)\s+([^\n]+)'
+    scene_pattern = r'(\d+(?:[A-Z])?)\s+((?:INT\.|EXT\.)[^\n]+)'
     scenes = {}
-    current_scene_text = ""
-    current_scene_num = None
     
-    # Split text into lines and process
-    lines = script_text.split('\n')
-    for line in lines:
-        # Check if line starts a new scene
-        match = re.match(scene_pattern, line)
-        if match:
-            # Save previous scene if exists
-            if current_scene_num:
-                scenes[current_scene_num] = current_scene_text.strip()
-            
-            # Start new scene
-            current_scene_num = match.group(1)
-            current_scene_text = line + "\n"
+    # Split text into sections by scene numbers
+    matches = list(re.finditer(scene_pattern, script_text))
+    
+    for i in range(len(matches)):
+        start = matches[i].start()
+        # If this is the last scene, get text until the end
+        if i == len(matches) - 1:
+            end = len(script_text)
         else:
-            # Add line to current scene if one exists
-            if current_scene_num:
-                current_scene_text += line + "\n"
-    
-    # Save last scene
-    if current_scene_num:
-        scenes[current_scene_num] = current_scene_text.strip()
+            end = matches[i + 1].start()
+        
+        scene_text = script_text[start:end].strip()
+        scene_num = matches[i].group(1)
+        
+        # Only include if it looks like a valid scene
+        if len(scene_text) > 50:  # Minimum length to be considered a scene
+            scenes[scene_num] = scene_text
     
     return scenes
 
@@ -96,30 +90,31 @@ def extract_scene_characters(text):
     """Extract only characters that actually appear in the scene"""
     characters = set()
     
-    # First pass - look for character names before dialogue
-    character_pattern = r'\n([A-Z][A-Z\s]+)(?:\s*\(.*?\))?\s*\n(?=\S)'
+    # First pass - look for character names before dialogue or scene directions
+    character_pattern = r'\n([A-Z][A-Z\s\'\-]+)(?:\s*\([^)]+\))?\s*\n(?=[\s\w])'
     
-    # Second pass - look for character names in action lines
-    action_pattern = r'\b([A-Z][A-Z\s]+)(?:\s*and\s+[A-Z][A-Z\s]+)?\b'
-    
-    # Filter out common false positives
+    # Additional words to exclude
     excluded_words = {
         'INT', 'EXT', 'CONTINUED', 'CONTINUOUS', 'CUT TO', 'FADE IN', 'FADE OUT',
         'DISSOLVE TO', 'SMASH CUT', 'BACK TO', 'FLASHBACK', 'END', 'THE', 'BUT',
         'THEN', 'WHEN', 'AND', 'SCENE', 'WE', 'NOW', 'LATER', 'DAY', 'NIGHT',
-        'MORNING', 'EVENING', 'AFTERNOON', 'CHYRON', 'SUBTITLE'
+        'MORNING', 'EVENING', 'AFTERNOON', 'CHYRON', 'SUBTITLE', 'MORE', 'CONT',
+        'NOTE', 'LEVIATHAN', 'PINK', 'GREEN', 'YELLOW', 'BLUE', 'WHITE',
+        'MOMENTS', 'HELP', 'STOP', 'SEES', 'SUDDENLY', 'SHOOTS'
     }
     
-    # Process both patterns
-    for pattern in [character_pattern, action_pattern]:
-        matches = re.finditer(pattern, text)
-        for match in matches:
-            name = match.group(1).strip()
-            # Only add if it's not in excluded words and looks like a name
-            if (name not in excluded_words and 
-                len(name) > 1 and
-                not any(word in name for word in ['VOICES', 'CROWD', 'VARIOUS'])):
-                characters.add(name)
+    # Process pattern
+    matches = re.finditer(character_pattern, text, re.MULTILINE)
+    for match in matches:
+        name = match.group(1).strip()
+        # Only add if it's not in excluded words and looks like a name
+        if (name not in excluded_words and 
+            len(name) > 1 and
+            not any(word in name for word in ['VOICES', 'CROWD', 'VARIOUS']) and
+            not name.endswith('S HOME') and
+            not name.startswith('CONT') and
+            not any(char.isdigit() for char in name)):
+            characters.add(name)
     
     return sorted(list(characters))
 def check_scene_content(text):
