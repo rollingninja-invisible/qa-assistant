@@ -398,6 +398,7 @@ if "qa_content" not in st.session_state:
 st.title("Script QA Assistant")
 
 # File upload section
+# File upload section
 with st.sidebar:
     st.header("Settings")
     script_file = st.file_uploader(
