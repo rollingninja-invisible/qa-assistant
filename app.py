@@ -313,22 +313,45 @@ with st.sidebar:
     
     if script_file and qa_file and st.button("Process Documents"):
         with st.spinner("Processing documents..."):
+            # Process script
             script_text, page_mapping = process_pdf(script_file)
             if script_text:
                 st.session_state.script_content = script_text
                 
                 try:
+                    # Process QA sheet
                     qa_data = pd.read_csv(qa_file)
                     st.session_state.qa_content = qa_data.to_dict('records')
+                    
+                    # Automatically analyze all scenes
+                    full_report = []
+                    scenes = re.split(r'\n\d+\s+(?:INT\.|EXT\.)', script_text)
+                    scenes = [f"1 {scene}" if i == 0 else f"INT.{scene}" for i, scene in enumerate(scenes) if scene.strip()]
+                    
+                    for qa_row in qa_data.to_dict('records'):
+                        scene_num = str(qa_row.get('Scene #', '')).strip()
+                        matching_scene = next((s for s in scenes if s.startswith(scene_num + " ")), None)
+                        
+                        if matching_scene:
+                            validations = validate_scene(matching_scene, qa_row)
+                            report = format_validation_report(scene_num, validations)
+                            full_report.append(report)
+                        else:
+                            full_report.append(f"\nSCENE {scene_num} ANALYSIS:\nError: Scene not found in script\n")
+                    
+                    # Display the full report
+                    st.markdown("### Complete Analysis Report")
+                    st.markdown("\n".join(full_report))
+                    
                     st.success("Documents processed successfully!")
                 except Exception as e:
                     st.error(f"Error processing QA sheet: {str(e)}")
             else:
                 st.error("Error processing script PDF")
 
-# Chat interface
-st.markdown("### Script QA Analysis")
-st.markdown("Upload both script PDF and QA sheet (CSV) to begin validation.")
+# Chat interface for follow-up questions
+st.markdown("### Ask Questions About the Analysis")
+st.markdown("You can ask specific questions about scenes or discrepancies.")
 
 # Show chat history
 for message in st.session_state.messages:
@@ -336,40 +359,21 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # Chat input
-# Chat input
-if prompt := st.chat_input("Request analysis or ask about specific scenes"):
+if prompt := st.chat_input("Ask about specific scenes or issues"):
     with st.chat_message("user"):
         st.markdown(prompt)
     
     st.session_state.messages.append({"role": "user", "content": prompt})
 
     with st.chat_message("assistant"):
-        with st.spinner("Analyzing documents..."):
-            if "analyze" in prompt.lower() or "check" in prompt.lower():
-                full_report = []
-                
-                # Split script into scenes
-                scenes = re.split(r'\n\d+\s+(?:INT\.|EXT\.)', st.session_state.script_content)
-                scenes = [f"1 {scene}" if i == 0 else f"INT.{scene}" for i, scene in enumerate(scenes) if scene.strip()]
-                
-                for qa_row in st.session_state.qa_content:
-                    scene_num = str(qa_row.get('Scene #', '')).strip()
-                    matching_scene = next((s for s in scenes if s.startswith(scene_num + " ")), None)
-                    
-                    if matching_scene:
-                        validations = validate_scene(matching_scene, qa_row)
-                        report = format_validation_report(scene_num, validations)
-                        full_report.append(report)
-                
-                response = "\n".join(full_report)
-            else:
-                response = client.messages.create(
-                    model="claude-3-sonnet-20240229",
-                    max_tokens=4000,
-                    temperature=0,
-                    system="You are a Script QA expert. Analyze each scene and validate QA sheet entries for accuracy. Report only discrepancies that need to be fixed. Do not include any direct quotes or detailed scene descriptions.",
-                    messages=[{"role": "user", "content": prompt}]
-                ).content[0].text
+        with st.spinner("Processing question..."):
+            response = client.messages.create(
+                model="claude-3-sonnet-20240229",
+                max_tokens=4000,
+                temperature=0,
+                system="You are a Script QA expert. Help explain the analysis results and answer questions about specific scenes or discrepancies.",
+                messages=[{"role": "user", "content": prompt}]
+            ).content[0].text
 
             st.markdown(response)
             st.session_state.messages.append(
