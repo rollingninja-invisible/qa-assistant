@@ -8,6 +8,9 @@ import re
 import pandas as pd
 import pdfplumber
 import traceback
+import csv
+from difflib import SequenceMatcher
+import spacy
 
 # Load environment variables
 load_dotenv()
@@ -30,6 +33,7 @@ st.set_page_config(
     layout="wide",
     initial_sidebar_state="expanded"
 )
+
 def process_pdf(pdf_file):
     """Extract text from PDF maintaining page numbers"""
     text = ""
@@ -45,8 +49,6 @@ def process_pdf(pdf_file):
         st.error(f"Error processing PDF: {str(e)}")
         return None, None
     return text, page_mapping
-
-import csv
 
 def process_csv(csv_file):
     """Extract text from CSV maintaining row order"""
@@ -148,16 +150,13 @@ def extract_scene_header(text):
 
 def split_into_scenes(script_text):
     """Split script text into individual scenes"""
-    # Adjust the pattern to match your script's scene headers
     scene_pattern = r'(\d+[A-Z]?)\s+(INT\.|EXT\.)\s+.*?\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT)'
     scenes = {}
     
-    # Split text into sections by scene numbers
     matches = list(re.finditer(scene_pattern, script_text))
     
     for i in range(len(matches)):
         start = matches[i].start()
-        # If this is the last scene, get text until the end
         if i == len(matches) - 1:
             end = len(script_text)
         else:
@@ -166,8 +165,7 @@ def split_into_scenes(script_text):
         scene_text = script_text[start:end].strip()
         scene_num = matches[i].group(1)
         
-        # Only include if it looks like a valid scene
-        if len(scene_text) > 50:  # Minimum length to be considered a scene
+        if len(scene_text) > 50:
             scenes[scene_num] = scene_text
     
     return scenes
@@ -270,10 +268,13 @@ def validate_scene(scene_text, qa_row):
     }
 
     # Scene Header
+    qa_header = str(qa_row.get('Full scene header', ''))
+    similarity = SequenceMatcher(None, scene_header['full_header'], qa_header).ratio()
+    
     validations['Full scene header'] = {
-        'current': str(qa_row.get('Full scene header', '')),
+        'current': qa_header,
         'correct': scene_header['full_header'],
-        'status': str(qa_row.get('Full scene header', '')).strip() == scene_header['full_header'].strip()
+        'status': similarity > 0.9  # adjust the threshold as needed
     }
 
     # INT/EXT Settings
@@ -300,9 +301,9 @@ def validate_scene(scene_text, qa_row):
     validations['Characters'] = {
         'current': qa_characters,
         'correct': scene_characters,
-        'missing': list(set(scene_characters) - set(qa_characters)),
-        'extra': list(set(qa_characters) - set(scene_characters)),
-        'status': set(scene_characters) == set(qa_characters)
+        'missing': list(set(qa_characters) - set(scene_characters)),
+        'extra': list(set(scene_characters) - set(qa_characters)),
+        'status': set(qa_characters) == set(scene_characters)
     }
 
     # Content Flags
@@ -406,9 +407,9 @@ st.title("Script QA Assistant")
 with st.sidebar:
     st.header("Settings")
     script_file = st.file_uploader(
-        "Upload Script PDF",
-        type=["pdf"],
-        help="Upload the original script PDF"
+        "Upload Script PDF or CSV",
+        type=["pdf", "csv"],
+        help="Upload the original script PDF or CSV"
     )
     
     qa_file = st.file_uploader(
@@ -423,8 +424,16 @@ if script_file and qa_file:
     with col1:
         if st.button("Process Documents", type="primary", key="process_docs"):
             with st.spinner("Processing documents..."):
-                # Process script
-                script_text, page_mapping = process_pdf(script_file)
+                # Check file type
+                if script_file.type == "application/pdf":
+                    script_text, page_mapping = process_pdf(script_file)
+                elif script_file.type == "text/csv":
+                    script_text = process_csv(script_file)
+                    page_mapping = None
+                else:
+                    st.error("Unsupported file type. Please upload a PDF or CSV file.")
+                    st.stop()
+
                 if script_text:
                     try:
                         # Split script into scenes
@@ -473,7 +482,7 @@ if script_file and qa_file:
                         with st.expander("Error Details"):
                             st.code(traceback.format_exc())
                 else:
-                    st.error("Error processing script PDF")
+                    st.error("Error processing script file")
 
     with col2:
         if st.button("Reset Analysis", type="secondary"):
