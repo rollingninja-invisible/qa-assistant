@@ -336,6 +336,7 @@ for message in st.session_state.messages:
         st.markdown(message["content"])
 
 # Chat input
+# Chat input
 if prompt := st.chat_input("Request analysis or ask about specific scenes"):
     with st.chat_message("user"):
         st.markdown(prompt)
@@ -366,11 +367,7 @@ if prompt := st.chat_input("Request analysis or ask about specific scenes"):
                     model="claude-3-sonnet-20240229",
                     max_tokens=4000,
                     temperature=0,
-                    system_prompt = """You are a Script QA expert. Your task is to analyze each scene and validate the QA sheet entries without reproducing or quoting from the script directly. For each scene:
-                    1. Check if all fields match the script content
-                    2. Report only the discrepancies that need to be fixed
-                    3. Use the specified output format
-                    4. Do not include any direct quotes or detailed scene descriptions"""
+                    system="You are a Script QA expert. Analyze each scene and validate QA sheet entries for accuracy. Report only discrepancies that need to be fixed. Do not include any direct quotes or detailed scene descriptions.",
                     messages=[{"role": "user", "content": prompt}]
                 ).content[0].text
 
