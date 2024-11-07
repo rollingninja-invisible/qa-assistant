@@ -46,6 +46,93 @@ def process_pdf(pdf_file):
         return None, None
     return text, page_mapping
 
+import csv
+
+def process_csv(csv_file):
+    """Extract text from CSV maintaining row order"""
+    text = ""
+    try:
+        csv_reader = csv.reader(csv_file)
+        for row in csv_reader:
+            text += " ".join(row) + "\n"
+    except Exception as e:
+        st.error(f"Error processing CSV: {str(e)}")
+        return None
+    return text
+
+# In the main content area
+if script_file and qa_file:
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        if st.button("Process Documents", type="primary", key="process_docs"):
+            with st.spinner("Processing documents..."):
+                # Check file type
+                if script_file.type == "application/pdf":
+                    script_text, page_mapping = process_pdf(script_file)
+                elif script_file.type == "text/csv":
+                    script_text = process_csv(script_file)
+                    page_mapping = None
+                else:
+                    st.error("Unsupported file type. Please upload a PDF or CSV file.")
+                    st.stop()
+
+                if script_text:
+                    try:
+                        # Split script into scenes
+                        scenes = split_into_scenes(script_text)
+                        st.session_state.script_content = scenes
+                        
+                        # Process QA sheet
+                        qa_data = pd.read_csv(qa_file)
+                        qa_rows = qa_data.to_dict('records')
+                        st.session_state.qa_content = qa_rows
+                        
+                        # Debug information in expander
+                        with st.expander("Analysis Details"):
+                            st.info(f"Found {len(scenes)} scenes")
+                            st.text(f"Scene numbers: {', '.join(sorted(scenes.keys()))}")
+                        
+                        # Create tabs for different views
+                        tab1, tab2 = st.tabs(["Scene Analysis", "Summary"])
+                        
+                        with tab1:
+                            st.markdown("### Scene-by-Scene Analysis")
+                            for qa_row in qa_rows:
+                                scene_num = str(qa_row.get('Scene #', '')).strip()
+                                scene_content = scenes.get(scene_num)
+                                
+                                # Create expander for each scene
+                                with st.expander(f"Scene {scene_num}", expanded=True):
+                                    if scene_content:
+                                        validations = validate_scene(scene_content, qa_row)
+                                        report = format_validation_report(scene_num, validations)
+                                        st.markdown(report)
+                                    else:
+                                        st.markdown(f"⚠️ Scene not found in script")
+                        
+                        with tab2:
+                            st.markdown("### Analysis Summary")
+                            total_scenes = len(qa_rows)
+                            scenes_with_issues = sum(1 for row in qa_rows if scenes.get(str(row.get('Scene #', '')).strip()))
+                            st.metric("Total Scenes Processed", total_scenes)
+                            st.metric("Scenes with Issues", scenes_with_issues)
+                        
+                        st.success(f"Analysis complete! Processed {len(scenes)} scenes.")
+                        
+                    except Exception as e:
+                        st.error(f"Error processing documents: {str(e)}")
+                        with st.expander("Error Details"):
+                            st.code(traceback.format_exc())
+                else:
+                    st.error("Error processing script PDF")
+
+    with col2:
+        if st.button("Reset Analysis", type="secondary"):
+            st.session_state.messages = []
+            st.session_state.script_content = None
+            st.session_state.qa_content = None
+            st.rerun()
+
 def extract_scene_header(text):
     """Extract scene header information"""
     scene_pattern = r"(\d+)\s+(INT\.|EXT\.)\s+(.*?)\s*-\s*(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT)"
