@@ -111,6 +111,49 @@ def extract_scene_header(text):
         }
     return None
 
+def process_with_error_recovery(script_file, qa_file):
+    """
+    Process script and QA files with error handling and recovery
+    Returns: (script_scenes, qa_rows, warnings, errors)
+    """
+    warnings = []
+    errors = []
+    script_scenes = {}
+    qa_rows = []
+    try:
+        # Process script PDF
+        script_text, page_mapping = process_pdf(script_file)
+        if not script_text:
+            errors.append("Failed to extract text from script PDF")
+            return None, None, warnings, errors
+            
+        # Extract scenes from script
+        script_scenes = split_into_scenes(script_text)
+        if not script_scenes:
+            errors.append("No valid scenes found in script")
+            return None, None, warnings, errors
+
+        # Process QA sheet
+        try:
+            qa_data = pd.read_csv(qa_file)
+            validate_qa_sheet(qa_data)
+            qa_rows = qa_data.to_dict('records')
+        except Exception as e:
+            errors.append(f"Error processing QA sheet: {str(e)}")
+            return None, None, warnings, errors
+
+        # Basic validation
+        if len(script_scenes) == 0:
+            warnings.append("No scenes found in script")
+        if len(qa_rows) == 0:
+            warnings.append("No rows found in QA sheet")
+
+        return script_scenes, qa_rows, warnings, errors
+
+    except Exception as e:
+        errors.append(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
+        return None, None, warnings, errors
+
 def split_into_scenes(script_text):
     """Split script text into individual scenes"""
     scene_pattern = r'(\d+[A-Z]?)\s+((?:INT\.|EXT\.)|(?:INT\./EXT\.)|(?:I/E\.?))\s+(.*?)\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|MORNING|AFTERNOON)'
