@@ -410,7 +410,7 @@ def validate_qa_sheet(qa_data):
             'Contains a frightening / intense moment? '
         ]
     }
-    
+
     missing_columns = []
     for required_col, variations in column_mappings.items():
         if not any(var in qa_data.columns for var in variations):
@@ -434,33 +434,9 @@ def validate_qa_sheet(qa_data):
         if not re.match(r'^\d+[A-Z]?$', scene_num):
             raise ValueError(f"Invalid scene number format in row {idx + 1}: {scene_num}")
 
-# Initialize the AI
-client = anthropic.Anthropic()
-
-# Initialize session storage
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "script_content" not in st.session_state:
-    st.session_state.script_content = None
-if "qa_content" not in st.session_state:
-    st.session_state.qa_content = None
-
-# Main interface
-st.title("Script QA Assistant")
-
-# File upload section
-with st.sidebar:
-    st.header("Settings")
-    script_file = st.file_uploader(
-        "Upload Script PDF",
-        type=["pdf"],
-        help="Upload the original script PDF"
-    )
-    qa_file = st.file_uploader(
-        "Upload QA Sheet",
-        type=["csv"],
-        help="Upload the QA sheet in CSV format"
-    )
+# Example usage
+qa_data = pd.read_csv('path_to_your_qa_sheet.csv')
+validate_qa_sheet(qa_data)
 
 # Main content area
 if script_file and qa_file:
