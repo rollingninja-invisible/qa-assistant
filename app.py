@@ -31,6 +31,24 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
+# Content flag definitions
+CONTENT_FLAGS = {
+    'Contains sex/nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
+    'Contains violence?': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet', 'stab', 'wound', 'dead', 'murder', 'strangle', 'choke', 'slash', 'knife', 'weapon', 'assault'],
+    'Contains profanity?': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike', 'goddamn', 'christ', 'jesus', 'crap', 'piss', 'cock', 'dick', 'whore', 'slut'],
+    'Contains alcohol/drugs/smoking?': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette', 'alcohol', 'booze', 'weed', 'joint', 'pill', 'needle', 'inject', 'high', 'bottle', 'bar'],
+    'Contains a frightening/intense moment?': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death', 'panic', 'fear', 'traumatic', 'shock', 'disturbing', 'graphic', 'gory', 'brutal']
+}
+
+# Content flag column mappings
+FLAG_TO_COLUMN = {
+    'Contains sex/nudity?': 'Contains sex / nudity?',
+    'Contains violence?': 'Contains violence?',
+    'Contains profanity?': 'Contains profanity?',
+    'Contains alcohol/drugs/smoking?': 'Contains alcohol / drugs / smoking?',
+    'Contains a frightening/intense moment?': 'Contains a frightening / intense moment?'
+}
+
 def normalize_header(header):
     """Normalize scene header for comparison"""
     # Remove script formatting artifacts
@@ -227,14 +245,27 @@ def validate_scene(scene_text, qa_row):
                     matches.append(keyword)
         return bool(matches), matches
 
-    # Content flag column mappings
-    flag_to_column = {
-        'Contains sex / nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
-        'Contains violence?': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet', 'stab', 'wound', 'dead', 'murder', 'strangle', 'choke', 'slash', 'knife', 'weapon', 'assault'],
-        'Contains profanity?': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike', 'goddamn', 'christ', 'jesus', 'crap', 'piss', 'cock', 'dick', 'whore', 'slut'],
-        'Contains alcohol/drugs/smoking?': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette', 'alcohol', 'booze', 'weed', 'joint', 'pill', 'needle', 'inject', 'high', 'bottle', 'bar'],
-        'Contains a frightening/intense moment?': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death', 'panic', 'fear', 'traumatic', 'shock', 'disturbing', 'graphic', 'gory', 'brutal']
-    }
+    # Content Flags validation
+    flag_validations = {}
+    for flag, keywords in CONTENT_FLAGS.items():
+        has_content, evidence = check_content(scene_text, keywords)
+        qa_value = str(qa_row.get(FLAG_TO_COLUMN[flag], '')).upper()  # Use mapping
+        
+        # Only show discrepancy if QA doesn't match actual content
+        if qa_value == 'YES' and not has_content:
+            flag_validations[flag] = {
+                'current': qa_value,
+                'correct': 'NO',
+                'status': False,
+                'evidence': []
+            }
+        elif qa_value != 'YES' and has_content:
+            flag_validations[flag] = {
+                'current': qa_value,
+                'correct': 'YES',
+                'status': False,
+                'evidence': evidence
+            }
 
     # Content Flags validation
     flag_validations = {}
