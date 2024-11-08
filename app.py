@@ -53,12 +53,20 @@ def normalize_header(header):
     """Normalize scene header for comparison"""
     # Remove script formatting artifacts
     header = re.sub(r'\s+', ' ', header).strip()
-    # Remove scene numbers and trailing details
+    
+    # Remove scene numbers
     header = re.sub(r'^\d+[A-Z]?\s*', '', header)
+    
+    # Remove trailing qualifiers in parentheses
     header = re.sub(r'\s*\([^)]+\)\s*$', '', header)
+    
     # Standardize INT./EXT.
     header = header.replace('INT ', 'INT. ').replace('EXT ', 'EXT. ')
     header = header.replace('INT./', 'INT./').replace('EXT./', 'EXT./')
+    
+    # Remove extra time qualifiers
+    header = re.sub(r'\s*-\s*(?:CONTINUOUS|MOMENTS LATER|LATER)\s*(?:-|$)', '', header)
+    
     return header
 
 def process_pdf(pdf_file):
@@ -121,41 +129,68 @@ def split_into_scenes(script_text):
     return scenes
 
 def extract_scene_characters(text):
+    """Extract character names from script text"""
     characters = set()
-    lines = text.split('\n')
     
-    # Additional words to exclude
-    non_character_words = {
-        'WHEN', 'THEN', 'HALLWAY', 'BEDROOM', 'LIVING ROOM', 'KITCHEN',
-        'FOYER', 'BATHROOM', 'OFFICE', 'MANSION', 'HOME', 'STREET',
-        'LATER', 'NOW', 'SUDDENLY', 'HARD', 'RED', 'GOLD', 'END',
-        'SHOOTS', 'SCREAM', 'BLOOD', 'EYES', 'THE', 'AND', 'ALL',
-        'NOTE', 'DRAFT', 'OMITTED', 'CONTINUED'
+    # Words that should not be considered character names
+    excluded_words = {
+        # Scene elements
+        'INT', 'EXT', 'CONTINUED', 'CONT', 'SCENE', 'CHYRON',
+        'CUT', 'FADE', 'DISSOLVE', 'SMASH', 'FLASHBACK',
+        # Technical terms
+        'VOICE', 'O.S.', 'V.O.', 'SUBTITLE', 'SERIES',
+        # Directions
+        'ANGLE', 'CAMERA', 'POV', 'VIEW', 'CLOSER', 'BACK',
+        # Scene descriptions
+        'LATER', 'NOW', 'THEN', 'WHEN', 'SUDDENLY',
+        # Places
+        'BEDROOM', 'KITCHEN', 'HALLWAY', 'ROOM', 'OFFICE',
+        # Objects
+        'TAPE', 'PHONE', 'BOOK', 'CHAIR', 'TABLE', 'DOOR',
+        # Actions
+        'SHOOTS', 'FIRES', 'FALLS', 'MOVES', 'LOOKS'
     }
     
-    excluded_words = {
-        'INT', 'EXT', 'CONTINUED', 'CONT', 'VOICE', 'O.S.', 'V.O.',
-        'CUT', 'FADE', 'DISSOLVE', 'SMASH', 'BACK', 'FLASHBACK',
-        'CLOSER', 'CAMERA', 'POV', 'VIEW', 'ANGLE', 'PAN', 'CRANE',
-        'TRACKING', 'MOVING', 'REVERSE', 'FOLLOWING'
-    }.union(non_character_words)
+    def is_valid_character(name):
+        """Check if a name is a valid character name"""
+        if not name or len(name.split()) > 3:
+            return False
+        if any(word in name for word in excluded_words):
+            return False
+        if name.endswith('S HOME'):
+            return False
+        if re.search(r'\d', name):  # Contains numbers
+            return False
+        if any(x in name for x in ['CONT', 'VOICE', 'O.S.', 'V.O.']):
+            return False
+        return True
+
+    # Extract names from dialogue headers
+    dialogue_pattern = r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?=\s*[\n\(])'
+    for match in re.finditer(dialogue_pattern, text, re.MULTILINE):
+        name = match.group(1).strip()
+        if is_valid_character(name):
+            characters.add(name)
     
-    # Process character names
-    char_patterns = [
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s*\([^)]+\))',  # Names with descriptions
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s*,\s*|\s+and\s+)',  # Names in lists
-        r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?=\s*\n)',  # Dialogue headers
-    ]
-    
-    for pattern in char_patterns:
-        for match in re.finditer(pattern, text, re.MULTILINE):
-            name = match.group(1).strip()
-            if (len(name.split()) <= 3 and  # Most character names are 1-3 words
-                not any(word in name for word in excluded_words) and
-                not name.endswith('S HOME')):
-                characters.add(name)
-                
-    return sorted(list(characters))
+    # Extract names from character introductions
+    intro_pattern = r'([A-Z][A-Z\s\'\-]+?)(?:\s*\([^)]+\))'
+    for match in re.finditer(intro_pattern, text):
+        name = match.group(1).strip()
+        if is_valid_character(name):
+            characters.add(name)
+            
+    # Clean up character names
+    clean_characters = set()
+    for name in characters:
+        # Remove multiple spaces
+        name = ' '.join(name.split())
+        # Remove trailing 'THE' or leading articles
+        name = re.sub(r'^(?:THE|A|AN)\s+', '', name)
+        name = re.sub(r'\s+(?:THE|A|AN)$', '', name)
+        if is_valid_character(name):
+            clean_characters.add(name)
+            
+    return sorted(list(clean_characters))
 
 def calculate_scene_length(text):
     """Calculate scene length in eighths based on QA sheet format"""
@@ -254,16 +289,25 @@ def validate_scene(scene_text, qa_row):
             'status': False
         }   
    
-    # Content Flags - careful validation of actual content
-    def check_content(text, keywords):
-        """Check for actual content matches, not just keyword presence"""
-        text_lower = text.lower()
-        matches = []
-        for keyword in keywords:
-            pattern = rf'\b{re.escape(keyword.lower())}\b'
-            if re.search(pattern, text_lower):
+def check_content(text, keywords):
+    """Check for actual content matches with context"""
+    text_lower = text.lower()
+    matches = []
+    
+    for keyword in keywords:
+        # Use word boundaries for exact matches
+        pattern = rf'\b{re.escape(keyword.lower())}\b'
+        if re.search(pattern, text_lower):
+            # Get surrounding context to verify relevance
+            start = max(0, text_lower.find(keyword.lower()) - 50)
+            end = min(len(text_lower), text_lower.find(keyword.lower()) + len(keyword) + 50)
+            context = text_lower[start:end]
+            
+            # Exclude matches in stage directions or technical notes
+            if not any(x in context for x in ['(cont', '(continued', 'scene heading', 'title card']):
                 matches.append(keyword)
-        return bool(matches), matches
+                
+    return bool(matches), matches
 
      # Content flag column mappings
     flag_to_column = {
