@@ -96,48 +96,25 @@ def split_into_scenes(script_text):
 def extract_scene_characters(text):
     characters = set()
     lines = text.split('\n')
-    current_line = 0
     
-    # Add more words to exclude
-    excluded_words = {
-        'LIGHTS', 'SOUND', 'MUSIC', 'PHONE', 'DOOR', 'WINDOW', 'ALL', 'EVERYONE',
-        'SOMEBODY', 'SOMEONE', 'ANYONE', 'NOBODY', 'SOMETHING', 'NOTHING',
-        'INSIDE', 'OUTSIDE', 'ABOVE', 'BELOW', 'BEHIND', 'FRONT', 'LIGHTS', 
-        'SOUND', 'MUSIC', 'PHONE', 'DOOR', 'WINDOW', 'ALL', 'EVERYONE',
-        'SOMEBODY', 'SOMEONE', 'ANYONE', 'NOBODY', 'SOMETHING', 'NOTHING',
-        'INSIDE', 'OUTSIDE', 'ABOVE', 'BELOW', 'BEHIND', 'FRONT'
-    }
+    # Process character names in parentheses
+    char_pattern = r'([A-Z][A-Z\s\'\-]+)(?:\s*\([^)]+\))'
+    for match in re.finditer(char_pattern, text):
+        name = match.group(1).strip()
+        if len(name.split()) <= 3:  # Most character names are 1-3 words
+            characters.add(name)
     
-    while current_line < len(lines):
-        line = lines[current_line].strip()
-        next_line = lines[current_line + 1].strip() if current_line + 1 < len(lines) else ""
-        
-        # Improved character detection
+    # Process dialogue speakers
+    for i, line in enumerate(lines):
+        line = line.strip()
         if re.match(r'^[A-Z][A-Z\s\'\-]+$', line):
             name = line.strip()
-            
-            # Enhanced character validation
-            if (not any(word in name for word in excluded_words) and
-                not name.endswith('S HOME') and
-                not any(char.isdigit() for char in name) and
-                not any(word in name for word in ['VOICE', 'CONT', 'O.S.', 'V.O.']) and
-                len(name.split()) <= 3):  # Most character names are 1-3 words
-                
-                # Check for dialogue or parenthetical
-                if next_line.startswith('(') or (not next_line.isupper() and next_line):
-                    characters.add(name)
-        
-        current_line += 1
-    
-    # Also check for character introductions
-    character_pattern = r'(?:^|\s)([A-Z][A-Z\s\'\-]+)(?:\s*\([^)]+\))'
-    for match in re.finditer(character_pattern, text, re.MULTILINE):
-        name = match.group(1).strip()
-        if (not any(word in name for word in excluded_words) and
-            not name.endswith('S HOME') and
-            not any(char.isdigit() for char in name) and
-            len(name.split()) <= 3):
-            characters.add(name)
+            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
+            # Only add if followed by dialogue or parenthetical
+            if (next_line.startswith('(') or 
+                (not next_line.isupper() and next_line and 
+                 not any(x in name for x in ['CONTINUED', 'CONT']))):
+                characters.add(name)
     
     return sorted(list(characters))
 
@@ -145,16 +122,13 @@ def calculate_scene_length(text):
     """Calculate scene length in eighths"""
     content_lines = [line for line in text.split('\n') 
                     if line.strip() and not any(x in line for x in 
-                    ['INT.', 'EXT.', 'CONTINUED', 'LEVIATHAN', 'CHYRON', '--', '(CONT'])]
+                    ['INT.', 'EXT.', 'CONTINUED', 'LEVIATHAN', 'CHYRON', '--', '(CONT', 'SCENE', 'PINK'])]
     
     # Count meaningful lines (dialogue, action, etc.)
-    meaningful_lines = 0
-    for line in content_lines:
-        if line.isupper() and len(line) < 50:  # Character cue
-            continue
-        if line.startswith('('):  # Parenthetical
-            continue
-        meaningful_lines += 1
+    meaningful_lines = len([line for line in content_lines 
+                          if not (line.isupper() and len(line) < 50) and  # Skip character cues
+                          not line.startswith('(') and  # Skip parentheticals
+                          not any(x in line for x in ['Draft', 'Revised', 'Page'])])  # Skip script metadata
     
     # Return just the number
     return str(max(1, round(meaningful_lines / 8)))
@@ -167,9 +141,9 @@ def validate_scene(scene_text, qa_row):
         return {"error": "Could not parse scene header"}
     
     # Compare headers exactly as they appear in QA sheet
-    qa_header = str(qa_row.get('Full scene header', '')).strip()
-    script_header = scene_header['full_header'].replace(scene_header['scene_number'], '').strip()
-    
+    qa_header = str(qa_row.get('Full scene header (excluding scene number)', '')).strip()  
+    script_header = scene_header['full_header'].replace(f"{scene_header['scene_number']} ", '').strip()  # Add space after number
+
     if script_header != qa_header:
         validations['Full scene header'] = {
             'current': qa_header,
@@ -214,7 +188,8 @@ def validate_scene(scene_text, qa_row):
 
     # Characters - strict comparison of actual characters
     script_characters = set(extract_scene_characters(scene_text))
-    qa_characters = {char.strip() for char in str(qa_row.get('Characters Present', '')).split(',') if char.strip()}
+    qa_characters = {char.strip() for char in str(qa_row.get('Characters Present in Scene', '')).split(',') if char.strip()}  # Update column name
+
     
    # Clean up character names before comparison
     script_characters = {name.strip().replace('  ', ' ') for name in script_characters}
@@ -231,7 +206,7 @@ def validate_scene(scene_text, qa_row):
             'status': False
         }
    
-    scene_length = str(qa_row.get('Scene length', '')).strip()
+    scene_length = str(qa_row.get('Scene length\n(in eighths)', '')).strip()  # Update column name
     script_length = calculate_scene_length(scene_text)
     if scene_length != script_length:
         validations['Scene length'] = {
@@ -252,8 +227,9 @@ def validate_scene(scene_text, qa_row):
                     matches.append(keyword)
         return bool(matches), matches
 
-    content_flags = {
-        'Contains sex/nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
+    # Content flag column mappings
+    flag_to_column = {
+        'Contains sex / nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
         'Contains violence?': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet', 'stab', 'wound', 'dead', 'murder', 'strangle', 'choke', 'slash', 'knife', 'weapon', 'assault'],
         'Contains profanity?': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike', 'goddamn', 'christ', 'jesus', 'crap', 'piss', 'cock', 'dick', 'whore', 'slut'],
         'Contains alcohol/drugs/smoking?': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette', 'alcohol', 'booze', 'weed', 'joint', 'pill', 'needle', 'inject', 'high', 'bottle', 'bar'],
@@ -264,7 +240,7 @@ def validate_scene(scene_text, qa_row):
     flag_validations = {}
     for flag, keywords in content_flags.items():
         has_content, evidence = check_content(scene_text, keywords)
-        qa_value = str(qa_row.get(flag, '')).upper()
+        qa_value = str(qa_row.get(flag_to_column[flag], '')).upper()  # Use mapping
         
         # Only show discrepancy if QA doesn't match actual content
         if qa_value == 'YES' and not has_content:
@@ -281,6 +257,7 @@ def validate_scene(scene_text, qa_row):
                 'status': False,
                 'evidence': evidence
             }
+
     if flag_validations:
         validations['Content Flags'] = flag_validations
     return validations  
