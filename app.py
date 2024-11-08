@@ -267,14 +267,6 @@ def validate_scene(scene_text, qa_row):
                 'evidence': evidence
             }
 
-         elif qa_value != 'YES' and has_content:
-            flag_validations[flag] = {
-                'current': qa_value,
-                'correct': 'YES',
-                'status': False,
-                'evidence': evidence
-            }
-
     if flag_validations:
         validations['Content Flags'] = flag_validations
     return validations  
