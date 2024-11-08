@@ -106,7 +106,7 @@ def extract_scene_characters(text):
         'SOUND', 'MUSIC', 'PHONE', 'DOOR', 'WINDOW', 'ALL', 'EVERYONE',
         'SOMEBODY', 'SOMEONE', 'ANYONE', 'NOBODY', 'SOMETHING', 'NOTHING',
         'INSIDE', 'OUTSIDE', 'ABOVE', 'BELOW', 'BEHIND', 'FRONT'
-    })
+    }
     
     while current_line < len(lines):
         line = lines[current_line].strip()
