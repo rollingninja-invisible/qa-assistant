@@ -383,50 +383,41 @@ def generate_validation_summary(validations_by_scene):
 def validate_qa_sheet(qa_data):
     """Validate QA sheet structure and content with flexible column matching"""
     column_mappings = {
-        'Scene #': ['Scene #', 'Scene Number', 'Scene'],
+        'Scene #': ['Scene #'],
         'Full scene header (excluding scene number)': [
-            'Full scene header (excluding scene number)',
-            'Scene Header',
-            'Full Header'
+            'Full scene header (excluding scene number)'
         ],
         'Characters Present in Scene': [
-            'Characters Present in Scene',
-            'Characters',
-            'Characters Present'
+            'Characters Present in Scene'
         ],
         'Scene length (in eighths)': [
-            'Scene length (in eighths)',
-            'Scene length\n(in eighths)',
-            'Scene Length',
-            'Length in eighths'
+            'Scene length \n(in eighths)',  # Adjusted to match the CSV header exactly
+            'Scene length (in eighths)'
         ],
-        'Has Multiple Setups': ['Has Multiple Setups', 'Multiple Setups'],
-        'Has interior?': ['Has interior?', 'Interior'],
-        'Has exterior? ': ['Has exterior? ', 'Exterior'],
-        'Contains sex / nudity? ': ['Contains sex / nudity? ', 'Sex/Nudity'],
+        'Has Multiple Setups': ['Has Multiple Setups'],
+        'Has interior?': ['Has interior?'],
+        'Has exterior? ': ['Has exterior? '],
+        'Contains sex / nudity? ': ['Contains sex / nudity? '],
         'Contains violence? ': [
-            'Contains violence? ',
-            'Violence',
+            'Contains violence?',
             'Contains violence'
         ],
-        'Contains profanity? ': ['Contains profanity? ', 'Profanity'],
+        'Contains profanity? ': ['Contains profanity? '],
         'Contains alcohol / drugs / smoking? ': [
-            'Contains alcohol / drugs / smoking? ',
-            'Alcohol/Drugs/Smoking'
+            'Contains alcohol / drugs / smoking? '
         ],
         'Contains a frightening / intense moment? ': [
-            'Contains a frightening / intense moment? ',
-            'Frightening/Intense',
-            'Frightening/Intense Moment'
+            'Contains a frightening / intense moment? '
         ]
     }
-
+    
     missing_columns = []
     for required_col, variations in column_mappings.items():
         if not any(var in qa_data.columns for var in variations):
             missing_columns.append(required_col)
     if missing_columns:
         raise ValueError(f"Missing required columns in QA sheet: {missing_columns}")
+
     # Rename columns to standard names if needed
     column_rename = {}
     for standard_name, variations in column_mappings.items():
@@ -436,6 +427,7 @@ def validate_qa_sheet(qa_data):
                 break
     if column_rename:
         qa_data.rename(columns=column_rename, inplace=True)
+
     # Validate scene numbers
     for idx, row in qa_data.iterrows():
         scene_num = str(row['Scene #']).strip()
