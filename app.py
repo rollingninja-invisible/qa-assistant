@@ -336,22 +336,45 @@ def generate_validation_summary(validations_by_scene):
                         })
     return summary
 
+# Modify the validate_qa_sheet function to handle variations in column names
 def validate_qa_sheet(qa_data):
-    """Validate QA sheet structure and content"""
-    required_columns = [
-        'Scene #',
-        'Full scene header (excluding scene number)',
-        'Characters Present in Scene',
-        'Scene length\n(in eighths)',
-        'Has Multiple Setups',
-        'Has interior?',
-        'Has exterior? '
-    ] + list(FLAG_TO_COLUMN.values())
+    """Validate QA sheet structure and content with flexible column matching"""
+    # Define variations of column names that are acceptable
+    column_mappings = {
+        'Scene #': ['Scene #', 'Scene Number', 'Scene'],
+        'Full scene header (excluding scene number)': ['Full scene header (excluding scene number)', 'Scene Header', 'Full Header'],
+        'Characters Present in Scene': ['Characters Present in Scene', 'Characters', 'Characters Present'],
+        'Scene length (in eighths)': ['Scene length (in eighths)', 'Scene length\n(in eighths)', 'Scene Length'],
+        'Has Multiple Setups': ['Has Multiple Setups', 'Multiple Setups'],
+        'Has interior?': ['Has interior?', 'Interior'],
+        'Has exterior? ': ['Has exterior? ', 'Exterior'],
+        'Contains sex / nudity? ': ['Contains sex / nudity? ', 'Sex/Nudity'],
+        'Contains violence? ': ['Contains violence? ', 'Violence'],
+        'Contains profanity? ': ['Contains profanity? ', 'Profanity'],
+        'Contains alcohol / drugs / smoking? ': ['Contains alcohol / drugs / smoking? ', 'Alcohol/Drugs/Smoking'],
+        'Contains a frightening / intense moment? ': ['Contains a frightening / intense moment? ', 'Frightening/Intense']
+    }
 
-    missing_columns = [col for col in required_columns if col not in qa_data.columns]
+    missing_columns = []
+    for required_col, variations in column_mappings.items():
+        if not any(var in qa_data.columns for var in variations):
+            missing_columns.append(required_col)
+
     if missing_columns:
         raise ValueError(f"Missing required columns in QA sheet: {missing_columns}")
 
+    # Rename columns to standard names if needed
+    column_rename = {}
+    for standard_name, variations in column_mappings.items():
+        for var in variations:
+            if var in qa_data.columns:
+                column_rename[var] = standard_name
+                break
+    
+    if column_rename:
+        qa_data.rename(columns=column_rename, inplace=True)
+
+    # Validate scene numbers
     for idx, row in qa_data.iterrows():
         scene_num = str(row['Scene #']).strip()
         if not re.match(r'^\d+[A-Z]?$', scene_num):
