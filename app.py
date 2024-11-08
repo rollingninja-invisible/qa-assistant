@@ -18,6 +18,7 @@ api_key = os.getenv('ANTHROPIC_API_KEY')
 if not api_key:
     st.error("No Anthropic API key found. Please make sure ANTHROPIC_API_KEY is set in your .env file.")
     st.stop()
+
 try:
     client = anthropic.Anthropic(api_key=api_key)
 except Exception as e:
@@ -42,11 +43,11 @@ CONTENT_FLAGS = {
 
 # Content flag column mappings (keys must match CONTENT_FLAGS exactly)
 FLAG_TO_COLUMN = {
-    'Contains sex / nudity?': 'Contains sex / nudity?',
-    'Contains violence?': 'Contains violence?',
-    'Contains profanity?': 'Contains profanity?',
-    'Contains alcohol / drugs / smoking?': 'Contains alcohol / drugs / smoking?',
-    'Contains a frightening / intense moment?': 'Contains a frightening / intense moment?'
+    'Contains sex / nudity?': 'Contains sex / nudity? ',
+    'Contains violence?': 'Contains violence? ',
+    'Contains profanity?': 'Contains profanity? ',
+    'Contains alcohol / drugs / smoking?': 'Contains alcohol / drugs / smoking? ',
+    'Contains a frightening / intense moment?': 'Contains a frightening / intense moment? '
 }
 
 def check_content(text, keywords):
@@ -65,16 +66,11 @@ def check_content(text, keywords):
 
 def normalize_header(header):
     """Normalize scene header for comparison"""
-    # Remove script formatting artifacts
     header = re.sub(r'\s+', ' ', header).strip()
-    # Remove scene numbers
     header = re.sub(r'^\d+[A-Z]?\s*', '', header)
-    # Remove trailing qualifiers in parentheses
     header = re.sub(r'\s*\([^)]+\)\s*$', '', header)
-    # Standardize INT./EXT.
     header = header.replace('INT ', 'INT. ').replace('EXT ', 'EXT. ')
     header = header.replace('INT./', 'INT./').replace('EXT./', 'EXT./')
-    # Remove extra time qualifiers
     header = re.sub(r'\s*-\s*(?:CONTINUOUS|MOMENTS LATER|LATER)\s*(?:-|$)', '', header)
     return header
 
@@ -100,11 +96,10 @@ def extract_scene_header(text):
     match = re.search(scene_pattern, text)
     if match:
         header_text = match.group(0).split('\n')[0].strip()
-        # Add validation for compound locations
         location = match.group(3).strip()
-        if ' - ' in location:  # Handle compound locations like "HOUSE - KITCHEN"
+        if ' - ' in location:
             locations = [loc.strip() for loc in location.split(' - ')]
-        if len(header_text) > 200:  # Sanity check for header length
+        if len(header_text) > 200:
             return None
         return {
             'scene_number': match.group(1),
@@ -112,7 +107,7 @@ def extract_scene_header(text):
             'location': locations,
             'time': match.group(4).strip(),
             'full_header': header_text,
-            'raw_match': match.group(0)  # Store raw match for debugging
+            'raw_match': match.group(0)
         }
     return None
 
@@ -120,13 +115,11 @@ def split_into_scenes(script_text):
     """Split script text into individual scenes"""
     scene_pattern = r'(\d+[A-Z]?)\s+((?:INT\.|EXT\.)|(?:INT\./EXT\.)|(?:I/E\.?))\s+(.*?)\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|MORNING|AFTERNOON)'
     scenes = {}
-    # First check for OMITTED scenes
     omitted_pattern = r'(\d+[A-Z]?)\s+(?:OMITTED)'
     omitted_matches = re.finditer(omitted_pattern, script_text)
     for match in omitted_matches:
         scene_num = match.group(1)
         scenes[scene_num] = "OMITTED"
-    # Then process regular scenes
     matches = list(re.finditer(scene_pattern, script_text))
     for i in range(len(matches)):
         start = matches[i].start()
@@ -136,29 +129,26 @@ def split_into_scenes(script_text):
             end = matches[i + 1].start()
         scene_text = script_text[start:end].strip()
         scene_num = matches[i].group(1)
-        if len(scene_text) > 50:  # Minimum length to be considered a scene
+        if len(scene_text) > 50:
             scenes[scene_num] = scene_text
     return scenes
 
 def extract_scene_characters(text):
     """Enhanced character extraction with contextual validation"""
     characters = set()
-    # Add handling for character groups and parentheticals
     character_groups = {
         'MOVIEGOERS': ['MOVIEGOERS of all ages', 'MOVIEGOERS'],
         'MOURNERS': ['MOURNERS', 'GROUP OF MOURNERS'],
         'COPS': ['COPS', 'POLICE OFFICERS', 'OFFICERS']
     }
-    # Handle character descriptions in parentheticals
     character_pattern = r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?:\s*\((?:[^)]+)\))?\s*\n'
     for match in re.finditer(character_pattern, text, re.MULTILINE):
         name = match.group(1).strip()
-        # Additional validation checks
-        if (len(name.split()) <= 3 and  # Max 3 words
+        if (len(name.split()) <= 3 and
             not any(fp in name for fp in ['FP']) and
-            not re.search(r'\d', name) and  # No numbers
-            len(name) >= 2 and  # Minimum length
-            len(name) <= 30):   # Maximum length
+            not re.search(r'\d', name) and
+            len(name) >= 2 and
+            len(name) <= 30):
             characters.add(name)
     return sorted(list(characters))
 
@@ -167,12 +157,10 @@ def calculate_scene_length(text):
     def count_action_lines(lines):
         count = 0
         for line in lines:
-            # Count continued scenes properly
             if not re.match(r'^CONTINUED:|^CONT\'D:', line):
                 if not line.strip().startswith('(') and not re.match(r'^[A-Z\s]+$', line):
                     count += 1
         return count
-    # Handle scene breaks and transitions
     lines = [l for l in text.split('\n') if l.strip() and not any(x in l for x in ['FADE OUT', 'CUT TO:', 'DISSOLVE TO:'])]
     action_lines = count_action_lines(lines)
     total_lines = action_lines + (len(lines) - action_lines) * 0.75
@@ -186,15 +174,12 @@ def validate_content_flags(scene_text, qa_row):
         qa_value = str(qa_row.get(FLAG_TO_COLUMN[flag], '')).upper()
         has_content = False
         evidence = []
-        # Enhanced context window
         for keyword in keywords:
             matches = re.finditer(rf'\b{re.escape(keyword.lower())}\b', scene_text.lower())
             for match in matches:
-                # Get larger context window
                 start = max(0, match.start() - 100)
                 end = min(len(scene_text), match.end() + 100)
                 context = scene_text[start:end]
-                # Skip if in technical directions
                 if not re.search(r'\([^)]*' + re.escape(keyword.lower()) + r'[^)]*\)', context):
                     has_content = True
                     evidence.append({
@@ -213,15 +198,13 @@ def validate_content_flags(scene_text, qa_row):
 def validate_scene(scene_text, qa_row):
     """Validate scene against QA sheet"""
     validations = {}
-    # Handle OMITTED scenes
     if scene_text == "OMITTED":
         return {"status": "OMITTED"}
     try:
         scene_header = extract_scene_header(scene_text)
         if not scene_header:
             return {"error": "Could not parse scene header"}
-        # Compare headers
-        qa_header = str(qa_row.get('Full scene header (including scene number)', '')).strip()
+        qa_header = str(qa_row.get('Full scene header (excluding scene number)', '')).strip()
         script_header = scene_header['full_header'].replace(f"{scene_header['scene_number']} ", '').strip()
         script_header = re.sub(r'\s*-\s*(?:CONTINUOUS|MOMENTS LATER|LATER)\s*(?:-|$)', '', script_header)
         if script_header != qa_header:
@@ -230,7 +213,6 @@ def validate_scene(scene_text, qa_row):
                 'correct': script_header,
                 'status': False
             }
-        # Multiple Setups validation
         location_changes = len(set(re.findall(r'(?:INT\.|EXT\.)\s+([^-]+)', scene_text)))
         time_changes = len(set(re.findall(r'-\s+(CONTINUOUS|LATER|MOMENTS LATER)', scene_text)))
         has_multiple = location_changes > 1 or time_changes > 0
@@ -241,7 +223,6 @@ def validate_scene(scene_text, qa_row):
                 'correct': 'YES' if has_multiple else 'NO',
                 'status': False
             }
-        # INT/EXT Settings
         is_int = 'INT' in scene_header['int_ext']
         is_ext = 'EXT' in scene_header['int_ext']
         qa_int = str(qa_row.get('Has interior?', '')).upper() == 'YES'
@@ -261,13 +242,10 @@ def validate_scene(scene_text, qa_row):
             }
         if int_ext_validations:
             validations['Interior/Exterior'] = int_ext_validations
-        # Characters validation
         script_characters = set(extract_scene_characters(scene_text))
         qa_characters = {char.strip() for char in str(qa_row.get('Characters Present in Scene', '')).split(',') if char.strip()}
-        # Clean up character names for comparison
         script_characters = {re.sub(r'\s+', ' ', name).strip() for name in script_characters}
         qa_characters = {re.sub(r'\s+', ' ', name).strip() for name in qa_characters}
-        # Compare cleaned character sets
         missing_chars = qa_characters - script_characters
         extra_chars = script_characters - qa_characters
         if missing_chars or extra_chars:
@@ -276,7 +254,6 @@ def validate_scene(scene_text, qa_row):
                 'extra': sorted(list(extra_chars)),
                 'status': False
             }
-        # Scene length validation
         scene_length = str(qa_row.get('Scene length (in eighths)', '')).strip()
         script_length = calculate_scene_length(scene_text)
         if scene_length != script_length:
@@ -285,7 +262,6 @@ def validate_scene(scene_text, qa_row):
                 'correct': script_length,
                 'status': False
             }
-        # Content flags validation
         flag_validations = validate_content_flags(scene_text, qa_row)
         if flag_validations:
             validations['Content Flags'] = flag_validations
@@ -302,7 +278,6 @@ def format_validation_report(scene_number, validations):
         report += "✅ All fields verified correct\n"
         return report
     report += "Required Updates:\n"
-    # Sort validations by field type
     if 'Full scene header' in validations:
         report += f"\nFull scene header\n"
         report += f"Current: {validations['Full scene header']['current']}\n"
@@ -353,7 +328,6 @@ def generate_validation_summary(validations_by_scene):
             for issue_type in validations:
                 if issue_type != 'error':
                     summary['issues_by_type'][issue_type] += 1
-                    # Track critical issues
                     if issue_type in ['Characters', 'Full scene header']:
                         summary['critical_issues'].append({
                             'scene': scene_num,
@@ -366,17 +340,18 @@ def validate_qa_sheet(qa_data):
     """Validate QA sheet structure and content"""
     required_columns = [
         'Scene #',
-        'Full scene header (including scene number)',
+        'Full scene header (excluding scene number)',
         'Characters Present in Scene',
-        'Scene length (in eighths)',
+        'Scene length\n(in eighths)',
         'Has Multiple Setups',
         'Has interior?',
-        'Has exterior?'
+        'Has exterior? '
     ] + list(FLAG_TO_COLUMN.values())
+
     missing_columns = [col for col in required_columns if col not in qa_data.columns]
     if missing_columns:
         raise ValueError(f"Missing required columns in QA sheet: {missing_columns}")
-    # Validate data types and formats
+
     for idx, row in qa_data.iterrows():
         scene_num = str(row['Scene #']).strip()
         if not re.match(r'^\d+[A-Z]?$', scene_num):
@@ -387,17 +362,13 @@ def process_with_error_recovery(script_file, qa_file):
     errors = []
     warnings = []
     try:
-        # Process script
         script_text, page_mapping = process_pdf(script_file)
         if not script_text:
             raise ValueError("Failed to extract text from PDF")
-        # Validate script structure
         if not re.search(r'\d+[A-Z]?\s+(?:INT\.|EXT\.)', script_text):
             warnings.append("Script may not follow standard formatting")
-        # Process QA sheet
         qa_data = pd.read_csv(qa_file)
         validate_qa_sheet(qa_data)
-        # Compare scene counts
         script_scenes = split_into_scenes(script_text)
         qa_scenes = set(str(row['Scene #']).strip() for _, row in qa_data.iterrows())
         missing_scenes = qa_scenes - set(script_scenes.keys())
@@ -445,16 +416,13 @@ if script_file and qa_file:
     with col1:
         if st.button("Process Documents", type="primary", key="process_docs"):
             with st.spinner("Processing documents..."):
-                # Process script and QA sheet
                 script_scenes, qa_rows, warnings, errors = process_with_error_recovery(script_file, qa_file)
                 if script_scenes and qa_rows:
                     st.session_state.script_content = script_scenes
                     st.session_state.qa_content = qa_rows
-                    # Debug information in expander
                     with st.expander("Analysis Details"):
                         st.info(f"Found {len(script_scenes)} scenes")
                         st.text(f"Scene numbers: {', '.join(sorted(script_scenes.keys()))}")
-                    # Create tabs for different views
                     tab1, tab2 = st.tabs(["Scene Analysis", "Summary"])
                     with tab1:
                         st.markdown("### Scene-by-Scene Analysis")
@@ -462,13 +430,12 @@ if script_file and qa_file:
                         for qa_row in qa_rows:
                             scene_num = str(qa_row.get('Scene #', '')).strip()
                             scene_content = script_scenes.get(scene_num)
-                            # Create expander for each scene
                             with st.expander(f"Scene {scene_num}", expanded=True):
                                 try:
                                     if scene_content:
                                         validations = validate_scene(scene_content, qa_row)
                                         validations_by_scene[scene_num] = validations
-                                        if validations:  # Check if validations is not None
+                                        if validations:
                                             report = format_validation_report(scene_num, validations)
                                             st.markdown(report)
                                         else:
