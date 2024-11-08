@@ -256,14 +256,14 @@ def validate_scene(scene_text, qa_row):
    
     # Content Flags - careful validation of actual content
     def check_content(text, keywords):
-    """Check for actual content matches, not just keyword presence"""
-    text_lower = text.lower()
-    matches = []
-    for keyword in keywords:
-        pattern = rf'\b{re.escape(keyword.lower())}\b'
-        if re.search(pattern, text_lower):
-            matches.append(keyword)
-    return bool(matches), matches
+        """Check for actual content matches, not just keyword presence"""
+        text_lower = text.lower()
+        matches = []
+        for keyword in keywords:
+            pattern = rf'\b{re.escape(keyword.lower())}\b'
+            if re.search(pattern, text_lower):
+                matches.append(keyword)
+        return bool(matches), matches
 
      # Content flag column mappings
     flag_to_column = {
