@@ -53,8 +53,9 @@ def normalize_header(header):
     """Normalize scene header for comparison"""
     # Remove script formatting artifacts
     header = re.sub(r'\s+', ' ', header).strip()
-    # Remove scene numbers
+    # Remove scene numbers and trailing details
     header = re.sub(r'^\d+[A-Z]?\s*', '', header)
+    header = re.sub(r'\s*\([^)]+\)\s*$', '', header)
     # Standardize INT./EXT.
     header = header.replace('INT ', 'INT. ').replace('EXT ', 'EXT. ')
     header = header.replace('INT./', 'INT./').replace('EXT./', 'EXT./')
@@ -123,41 +124,37 @@ def extract_scene_characters(text):
     characters = set()
     lines = text.split('\n')
     
-    # Add pattern for background characters
-    char_patterns = [
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s*\([^)]+\))',  # Names with parenthetical descriptions
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s+and\s+|\s*,\s*|\s+-\s+)',  # Names in lists
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s+[\w\s]+){1,3}(?:\s*\([^)]+\))',  # Names with descriptors
-        r'([A-Z][A-Z\s\'\-]+?)(?:\s+\([^)]+\)|$)',  # Names at end of line or with parenthetical
-        r'([A-Z][A-Z\s\'\-]+\sof\s[A-Z][A-Z\s\'\-]+)'  # Group descriptors like "MOVIEGOERS of all ages"
-    ]
-
+    # Additional words to exclude
+    non_character_words = {
+        'WHEN', 'THEN', 'HALLWAY', 'BEDROOM', 'LIVING ROOM', 'KITCHEN',
+        'FOYER', 'BATHROOM', 'OFFICE', 'MANSION', 'HOME', 'STREET',
+        'LATER', 'NOW', 'SUDDENLY', 'HARD', 'RED', 'GOLD', 'END',
+        'SHOOTS', 'SCREAM', 'BLOOD', 'EYES', 'THE', 'AND', 'ALL',
+        'NOTE', 'DRAFT', 'OMITTED', 'CONTINUED'
+    }
+    
     excluded_words = {
         'INT', 'EXT', 'CONTINUED', 'CONT', 'VOICE', 'O.S.', 'V.O.',
         'CUT', 'FADE', 'DISSOLVE', 'SMASH', 'BACK', 'FLASHBACK',
         'CLOSER', 'CAMERA', 'POV', 'VIEW', 'ANGLE', 'PAN', 'CRANE',
         'TRACKING', 'MOVING', 'REVERSE', 'FOLLOWING'
-    }
-
-    # Process main text for character names
+    }.union(non_character_words)
+    
+    # Process character names
+    char_patterns = [
+        r'([A-Z][A-Z\s\'\-]+?)(?:\s*\([^)]+\))',  # Names with descriptions
+        r'([A-Z][A-Z\s\'\-]+?)(?:\s*,\s*|\s+and\s+)',  # Names in lists
+        r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?=\s*\n)',  # Dialogue headers
+    ]
+    
     for pattern in char_patterns:
-        matches = re.finditer(pattern, text, re.MULTILINE)
-        for match in matches:
+        for match in re.finditer(pattern, text, re.MULTILINE):
             name = match.group(1).strip()
             if (len(name.split()) <= 3 and  # Most character names are 1-3 words
                 not any(word in name for word in excluded_words) and
                 not name.endswith('S HOME')):
                 characters.add(name)
-    
-    # Process dialogue cues
-    for i, line in enumerate(lines):
-        if re.match(r'^[A-Z][A-Z\s\'\-]+$', line.strip()):
-            name = line.strip()
-            next_line = lines[i + 1].strip() if i + 1 < len(lines) else ""
-            if ((next_line.startswith('(') or not next_line.isupper()) and
-                not any(word in name for word in excluded_words)):
-                characters.add(name)
-    
+                
     return sorted(list(characters))
 
 def calculate_scene_length(text):
@@ -259,15 +256,14 @@ def validate_scene(scene_text, qa_row):
    
     # Content Flags - careful validation of actual content
     def check_content(text, keywords):
-        """Check for actual content matches, not just keyword presence"""
-        text_lower = text.lower()
-        matches = []
-        for keyword in keywords:
-            if keyword in text_lower:
-                # Verify it's not part of a larger word
-                if re.search(rf'\b{keyword}\b', text_lower):
-                    matches.append(keyword)
-        return bool(matches), matches
+    """Check for actual content matches, not just keyword presence"""
+    text_lower = text.lower()
+    matches = []
+    for keyword in keywords:
+        pattern = rf'\b{re.escape(keyword.lower())}\b'
+        if re.search(pattern, text_lower):
+            matches.append(keyword)
+    return bool(matches), matches
 
      # Content flag column mappings
     flag_to_column = {
