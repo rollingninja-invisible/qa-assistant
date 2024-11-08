@@ -365,6 +365,93 @@ def validate_scene(scene_text, qa_row):
     except Exception as e:
         return {"error": f"Validation error: {str(e)}"}
 
+def validate_qa_sheet(qa_data):
+    """Validate QA sheet structure and content with flexible column matching"""
+    required_columns = {
+        'Scene #': ['Scene #'],
+        'Full scene header (excluding scene number)': [
+            'Full scene header (excluding scene number)'
+        ],
+        'Characters Present in Scene': [
+            'Characters Present in Scene'
+        ],
+        'Scene length (in eighths)': [
+            'Scene length \n(in eighths)',
+            'Scene length (in eighths)'
+        ],
+        'Has Multiple Setups': ['Has Multiple Setups'],
+        'Has interior?': ['Has interior?'],
+        'Has exterior? ': ['Has exterior? '],
+        'Contains sex / nudity? ': ['Contains sex / nudity? '],
+        'Contains violence? ': [
+            'Contains violence?',
+            'Contains violence? '
+        ],
+        'Contains profanity? ': ['Contains profanity? '],
+        'Contains alcohol / drugs / smoking? ': [
+            'Contains alcohol / drugs / smoking? '
+        ],
+        'Contains a frightening / intense moment? ': [
+            'Contains a frightening / intense moment? '
+        ]
+    }
+
+    # Check for missing columns
+    missing_columns = []
+    for required_col, variations in required_columns.items():
+        if not any(var in qa_data.columns for var in variations):
+            missing_columns.append(required_col)
+
+    if missing_columns:
+        raise ValueError(f"Missing required columns in QA sheet: {', '.join(missing_columns)}")
+
+    # Rename columns to standard names if needed
+    column_rename = {}
+    for standard_name, variations in required_columns.items():
+        for var in variations:
+            if var in qa_data.columns:
+                column_rename[var] = standard_name
+                break
+
+    if column_rename:
+        qa_data.rename(columns=column_rename, inplace=True)
+
+    # Validate scene numbers
+    for idx, row in qa_data.iterrows():
+        scene_num = str(row['Scene #']).strip()
+        if not re.match(r'^\d+[A-Z]?$', scene_num):
+            raise ValueError(f"Invalid scene number format in row {idx + 1}: {scene_num}")
+
+    # Validate YES/NO fields
+    boolean_columns = [
+        'Has Multiple Setups',
+        'Has interior?',
+        'Has exterior? ',
+        'Contains sex / nudity? ',
+        'Contains violence? ',
+        'Contains profanity? ',
+        'Contains alcohol / drugs / smoking? ',
+        'Contains a frightening / intense moment? '
+    ]
+
+    for col in boolean_columns:
+        if col in qa_data.columns:
+            invalid_values = qa_data[col].dropna().apply(lambda x: str(x).upper() not in ['YES', 'NO'])
+            if invalid_values.any():
+                invalid_rows = invalid_values[invalid_values].index + 1
+                raise ValueError(f"Invalid values in column '{col}' at rows: {list(invalid_rows)}. Must be YES or NO")
+
+    # Validate scene length format
+    if 'Scene length (in eighths)' in qa_data.columns:
+        invalid_lengths = qa_data['Scene length (in eighths)'].dropna().apply(
+            lambda x: not str(x).strip().isdigit()
+        )
+        if invalid_lengths.any():
+            invalid_rows = invalid_lengths[invalid_lengths].index + 1
+            raise ValueError(f"Invalid scene lengths at rows: {list(invalid_rows)}. Must be numeric values")
+
+    return True
+    
 # Main Streamlit interface
 st.title("Script QA Assistant")
 
