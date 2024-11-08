@@ -267,21 +267,7 @@ def validate_scene(scene_text, qa_row):
                 'evidence': evidence
             }
 
-    # Content Flags validation
-    flag_validations = {}
-    for flag, keywords in content_flags.items():
-        has_content, evidence = check_content(scene_text, keywords)
-        qa_value = str(qa_row.get(flag_to_column[flag], '')).upper()  # Use mapping
-        
-        # Only show discrepancy if QA doesn't match actual content
-        if qa_value == 'YES' and not has_content:
-            flag_validations[flag] = {
-                'current': qa_value,
-                'correct': 'NO',
-                'status': False,
-                'evidence': []
-            }
-        elif qa_value != 'YES' and has_content:
+         elif qa_value != 'YES' and has_content:
             flag_validations[flag] = {
                 'current': qa_value,
                 'correct': 'YES',
