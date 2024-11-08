@@ -397,13 +397,15 @@ def validate_qa_sheet(qa_data):
         'Scene length (in eighths)': [
             'Scene length (in eighths)',
             'Scene length\n(in eighths)',
-            'Scene Length'
+            'Scene Length',
+            'Scene length (in eighths)',
+            'Length in eighths'  # Add any other variations you might be using
         ],
         'Has Multiple Setups': ['Has Multiple Setups', 'Multiple Setups'],
         'Has interior?': ['Has interior?', 'Interior'],
         'Has exterior? ': ['Has exterior? ', 'Exterior'],
         'Contains sex / nudity? ': ['Contains sex / nudity? ', 'Sex/Nudity'],
-        'Contains violence? ': ['Contains violence? ', 'Violence'],
+        'Contains violence? ': ['Contains violence? ', 'Violence', 'Contains violence'],  # Add any other variations you might be using
         'Contains profanity? ': ['Contains profanity? ', 'Profanity'],
         'Contains alcohol / drugs / smoking? ': [
             'Contains alcohol / drugs / smoking? ',
@@ -411,18 +413,16 @@ def validate_qa_sheet(qa_data):
         ],
         'Contains a frightening / intense moment? ': [
             'Contains a frightening / intense moment? ',
-            'Frightening/Intense'
+            'Frightening/Intense',
+            'Frightening/Intense Moment'  # Add any other variations you might be using
         ]
     }
-
     missing_columns = []
     for required_col, variations in column_mappings.items():
         if not any(var in qa_data.columns for var in variations):
             missing_columns.append(required_col)
-
     if missing_columns:
         raise ValueError(f"Missing required columns in QA sheet: {missing_columns}")
-
     # Rename columns to standard names if needed
     column_rename = {}
     for standard_name, variations in column_mappings.items():
@@ -430,10 +430,8 @@ def validate_qa_sheet(qa_data):
             if var in qa_data.columns:
                 column_rename[var] = standard_name
                 break
-
     if column_rename:
         qa_data.rename(columns=column_rename, inplace=True)
-
     # Validate scene numbers
     for idx, row in qa_data.iterrows():
         scene_num = str(row['Scene #']).strip()
