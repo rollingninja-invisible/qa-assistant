@@ -40,13 +40,13 @@ CONTENT_FLAGS = {
     'Contains a frightening / intense moment?': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death', 'panic', 'fear', 'traumatic', 'shock', 'disturbing', 'graphic', 'gory', 'brutal']
 }
 
-# Content flag column mappings
+# Content flag column mappings (keys must match CONTENT_FLAGS exactly)
 FLAG_TO_COLUMN = {
-    'Contains sex/nudity?': 'Contains sex / nudity?',
+    'Contains sex / nudity?': 'Contains sex / nudity?',
     'Contains violence?': 'Contains violence?',
     'Contains profanity?': 'Contains profanity?',
-    'Contains alcohol/drugs/smoking?': 'Contains alcohol / drugs / smoking?',
-    'Contains a frightening/intense moment?': 'Contains a frightening / intense moment?'
+    'Contains alcohol / drugs / smoking?': 'Contains alcohol / drugs / smoking?',
+    'Contains a frightening / intense moment?': 'Contains a frightening / intense moment?'
 }
 
 def normalize_header(header):
@@ -278,10 +278,10 @@ def validate_scene(scene_text, qa_row):
         'Contains a frightening/intense moment?': 'Contains a frightening / intense moment?'
     }
 
-    # Content Flags validation
+        # Content Flags validation
     flag_validations = {}
-    for flag, column in flag_to_column.items():
-        qa_value = str(qa_row.get(column, '')).upper()
+    for flag in CONTENT_FLAGS.keys():  # Use the keys from CONTENT_FLAGS
+        qa_value = str(qa_row.get(FLAG_TO_COLUMN[flag], '')).upper()
         has_content, evidence = check_content(scene_text, CONTENT_FLAGS[flag])
         
         if qa_value != ('YES' if has_content else 'NO'):
