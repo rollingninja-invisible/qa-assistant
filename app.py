@@ -339,20 +339,37 @@ def generate_validation_summary(validations_by_scene):
 # Modify the validate_qa_sheet function to handle variations in column names
 def validate_qa_sheet(qa_data):
     """Validate QA sheet structure and content with flexible column matching"""
-    # Define variations of column names that are acceptable
     column_mappings = {
         'Scene #': ['Scene #', 'Scene Number', 'Scene'],
-        'Full scene header (excluding scene number)': ['Full scene header (excluding scene number)', 'Scene Header', 'Full Header'],
-        'Characters Present in Scene': ['Characters Present in Scene', 'Characters', 'Characters Present'],
-        'Scene length (in eighths)': ['Scene length (in eighths)', 'Scene length\n(in eighths)', 'Scene Length'],
+        'Full scene header (excluding scene number)': [
+            'Full scene header (excluding scene number)',
+            'Scene Header',
+            'Full Header'
+        ],
+        'Characters Present in Scene': [
+            'Characters Present in Scene',
+            'Characters',
+            'Characters Present'
+        ],
+        'Scene length (in eighths)': [
+            'Scene length (in eighths)',
+            'Scene length\n(in eighths)',
+            'Scene Length'
+        ],
         'Has Multiple Setups': ['Has Multiple Setups', 'Multiple Setups'],
         'Has interior?': ['Has interior?', 'Interior'],
         'Has exterior? ': ['Has exterior? ', 'Exterior'],
         'Contains sex / nudity? ': ['Contains sex / nudity? ', 'Sex/Nudity'],
         'Contains violence? ': ['Contains violence? ', 'Violence'],
         'Contains profanity? ': ['Contains profanity? ', 'Profanity'],
-        'Contains alcohol / drugs / smoking? ': ['Contains alcohol / drugs / smoking? ', 'Alcohol/Drugs/Smoking'],
-        'Contains a frightening / intense moment? ': ['Contains a frightening / intense moment? ', 'Frightening/Intense']
+        'Contains alcohol / drugs / smoking? ': [
+            'Contains alcohol / drugs / smoking? ',
+            'Alcohol/Drugs/Smoking'
+        ],
+        'Contains a frightening / intense moment? ': [
+            'Contains a frightening / intense moment? ',
+            'Frightening/Intense'
+        ]
     }
 
     missing_columns = []
@@ -370,7 +387,7 @@ def validate_qa_sheet(qa_data):
             if var in qa_data.columns:
                 column_rename[var] = standard_name
                 break
-    
+
     if column_rename:
         qa_data.rename(columns=column_rename, inplace=True)
 
@@ -379,31 +396,6 @@ def validate_qa_sheet(qa_data):
         scene_num = str(row['Scene #']).strip()
         if not re.match(r'^\d+[A-Z]?$', scene_num):
             raise ValueError(f"Invalid scene number format in row {idx + 1}: {scene_num}")
-
-def process_with_error_recovery(script_file, qa_file):
-    """Process files with comprehensive error handling and reporting"""
-    errors = []
-    warnings = []
-    try:
-        script_text, page_mapping = process_pdf(script_file)
-        if not script_text:
-            raise ValueError("Failed to extract text from PDF")
-        if not re.search(r'\d+[A-Z]?\s+(?:INT\.|EXT\.)', script_text):
-            warnings.append("Script may not follow standard formatting")
-        qa_data = pd.read_csv(qa_file)
-        validate_qa_sheet(qa_data)
-        script_scenes = split_into_scenes(script_text)
-        qa_scenes = set(str(row['Scene #']).strip() for _, row in qa_data.iterrows())
-        missing_scenes = qa_scenes - set(script_scenes.keys())
-        extra_scenes = set(script_scenes.keys()) - qa_scenes
-        if missing_scenes:
-            warnings.append(f"Scenes in QA sheet but not in script: {missing_scenes}")
-        if extra_scenes:
-            warnings.append(f"Scenes in script but not in QA sheet: {extra_scenes}")
-        return script_scenes, qa_data.to_dict('records'), warnings, errors
-    except Exception as e:
-        errors.append(str(e))
-        return None, None, warnings, errors
 
 # Initialize the AI
 client = anthropic.Anthropic()
