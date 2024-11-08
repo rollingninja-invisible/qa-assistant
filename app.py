@@ -58,16 +58,16 @@ def process_pdf(pdf_file):
     return text, page_mapping
 
 def extract_scene_header(text):
-    """Extract scene header information"""
     scene_pattern = r'(\d+[A-Z]?)\s+((?:INT\.|EXT\.)|(?:INT\./EXT\.)|(?:I/E\.?))\s+(.*?)\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|MORNING|AFTERNOON)'
     match = re.search(scene_pattern, text)
     if match:
+        header_text = match.group(0).split('\n')[0].strip()  # Get only first line
         return {
             'scene_number': match.group(1),
             'int_ext': match.group(2).strip('.'),
             'location': match.group(3).strip(),
             'time': match.group(4),
-            'full_header': match.group(0)
+            'full_header': header_text
         }
     return None
 
@@ -94,56 +94,49 @@ def split_into_scenes(script_text):
     return scenes
 
 def extract_scene_characters(text):
-    """Extract only actual characters with dialogue or action"""
     characters = set()
-    
-    # Split into lines
     lines = text.split('\n')
     current_line = 0
     
+    # Add more words to exclude
     excluded_words = {
-    'INT', 'EXT', 'CONTINUED', 'CONTINUOUS', 'CUT', 'FADE',
-    'DISSOLVE', 'SMASH', 'BACK', 'FLASHBACK', 'END', 'SCENE',
-    'CLOSER', 'CLOSE ON', 'ANGLE ON', 'VIEW ON', 'PAN TO',
-    'WIDER', 'CAMERA', 'POV', 'TITLE', 'TITLES', 'CREDIT',
-    'CREDITS', 'INTERCUT', 'PRELAP', 'CHYRON', 'OMITTED',
-    'CONT', 'MORE', 'VOICE', 'OFF', 'OVER', 'BLACK', 'WHITE',
-    'NOTE', 'NOTES', 'MONTAGE', 'SERIES OF SHOTS', 'BEGIN',
-    'END', 'SECTION', 'CONTINUED', 'LATER', 'MOMENTS', 'SUPERIMPOSE', 
-    'SUBTITLE', 'TITLE CARD', 'ESTABLISHING', 'AERIAL',
-    'TRACKING', 'MOVING', 'FOLLOWING', 'REVERSE', 'MATCH', 'INSERT',
-    'SPLIT SCREEN', 'ZOOM', 'SLOW MOTION', 'FAST MOTION', 'TIME LAPSE',
-    'FLASH', 'QUICK', 'SCENE', 'SHOTS', 'BEGIN', 'ENDS', 'THROUGH'
-    }
+        'LIGHTS', 'SOUND', 'MUSIC', 'PHONE', 'DOOR', 'WINDOW', 'ALL', 'EVERYONE',
+        'SOMEBODY', 'SOMEONE', 'ANYONE', 'NOBODY', 'SOMETHING', 'NOTHING',
+        'INSIDE', 'OUTSIDE', 'ABOVE', 'BELOW', 'BEHIND', 'FRONT', 'LIGHTS', 
+        'SOUND', 'MUSIC', 'PHONE', 'DOOR', 'WINDOW', 'ALL', 'EVERYONE',
+        'SOMEBODY', 'SOMEONE', 'ANYONE', 'NOBODY', 'SOMETHING', 'NOTHING',
+        'INSIDE', 'OUTSIDE', 'ABOVE', 'BELOW', 'BEHIND', 'FRONT'
+    })
     
     while current_line < len(lines):
         line = lines[current_line].strip()
+        next_line = lines[current_line + 1].strip() if current_line + 1 < len(lines) else ""
         
-        # Look for character cues (all caps followed by dialogue)
+        # Improved character detection
         if re.match(r'^[A-Z][A-Z\s\'\-]+$', line):
             name = line.strip()
             
-            # Verify it's actually a character
+            # Enhanced character validation
             if (not any(word in name for word in excluded_words) and
                 not name.endswith('S HOME') and
                 not any(char.isdigit() for char in name) and
-                not any(word in name for word in ['VOICE', 'CONT'])):
+                not any(word in name for word in ['VOICE', 'CONT', 'O.S.', 'V.O.']) and
+                len(name.split()) <= 3):  # Most character names are 1-3 words
                 
-                # Check next line for dialogue or parenthetical
-                if current_line + 1 < len(lines):
-                    next_line = lines[current_line + 1].strip()
-                    if next_line.startswith('(') or (not next_line.isupper() and next_line):
-                        characters.add(name)
+                # Check for dialogue or parenthetical
+                if next_line.startswith('(') or (not next_line.isupper() and next_line):
+                    characters.add(name)
         
         current_line += 1
     
-    # Also check for character introductions in action lines
-    character_intro = r'\b([A-Z][A-Z\s\'\-]+)(?:\s*\(.*?\))+'
-    for match in re.finditer(character_intro, text):
+    # Also check for character introductions
+    character_pattern = r'(?:^|\s)([A-Z][A-Z\s\'\-]+)(?:\s*\([^)]+\))'
+    for match in re.finditer(character_pattern, text, re.MULTILINE):
         name = match.group(1).strip()
         if (not any(word in name for word in excluded_words) and
             not name.endswith('S HOME') and
-            not any(char.isdigit() for char in name)):
+            not any(char.isdigit() for char in name) and
+            len(name.split()) <= 3):
             characters.add(name)
     
     return sorted(list(characters))
@@ -151,25 +144,35 @@ def extract_scene_characters(text):
 def calculate_scene_length(text):
     """Calculate scene length in eighths"""
     content_lines = [line for line in text.split('\n') 
-                    if line.strip() and not line.strip().startswith(('INT.', 'EXT.'))]
-    eighths = max(1, round(len(content_lines) / 8))
-    return f"{eighths}/8"
+                    if line.strip() and not any(x in line for x in 
+                    ['INT.', 'EXT.', 'CONTINUED', 'LEVIATHAN', 'CHYRON', '--', '(CONT'])]
+    
+    # Count meaningful lines (dialogue, action, etc.)
+    meaningful_lines = 0
+    for line in content_lines:
+        if line.isupper() and len(line) < 50:  # Character cue
+            continue
+        if line.startswith('('):  # Parenthetical
+            continue
+        meaningful_lines += 1
+    
+    # Return just the number
+    return str(max(1, round(meaningful_lines / 8)))
 
 def validate_scene(scene_text, qa_row):
-    """Strictly validate QA sheet entries against script content"""
     validations = {}
     scene_header = extract_scene_header(scene_text)
     
     if not scene_header:
         return {"error": "Could not parse scene header"}
     
-    # Compare only the header content, excluding scene number
-    script_header = normalize_header(scene_header['full_header'])
-    qa_header = normalize_header(str(qa_row.get('Full scene header', '')))
+    # Compare headers exactly as they appear in QA sheet
+    qa_header = str(qa_row.get('Full scene header', '')).strip()
+    script_header = scene_header['full_header'].replace(scene_header['scene_number'], '').strip()
     
     if script_header != qa_header:
         validations['Full scene header'] = {
-            'current': str(qa_row.get('Full scene header', '')),
+            'current': qa_header,
             'correct': script_header,
             'status': False
         }
@@ -213,6 +216,11 @@ def validate_scene(scene_text, qa_row):
     script_characters = set(extract_scene_characters(scene_text))
     qa_characters = {char.strip() for char in str(qa_row.get('Characters Present', '')).split(',') if char.strip()}
     
+   # Clean up character names before comparison
+    script_characters = {name.strip().replace('  ', ' ') for name in script_characters}
+    qa_characters = {name.strip().replace('  ', ' ') for name in qa_characters}
+    
+    # Only report if there are actual differences
     missing_chars = script_characters - qa_characters
     extra_chars = qa_characters - script_characters
     
@@ -231,6 +239,7 @@ def validate_scene(scene_text, qa_row):
             'correct': script_length,
             'status': False
         }   
+   
     # Content Flags - careful validation of actual content
     def check_content(text, keywords):
         """Check for actual content matches, not just keyword presence"""
@@ -244,31 +253,38 @@ def validate_scene(scene_text, qa_row):
         return bool(matches), matches
 
     content_flags = {
-    'Contains sex/nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
-    'Contains violence?': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet', 'stab', 'wound', 'dead', 'murder', 'strangle', 'choke', 'slash', 'knife', 'weapon', 'assault'],
-    'Contains profanity?': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike', 'goddamn', 'christ', 'jesus', 'crap', 'piss', 'cock', 'dick', 'whore', 'slut'],
-    'Contains alcohol/drugs/smoking?': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette', 'alcohol', 'booze', 'weed', 'joint', 'pill', 'needle', 'inject', 'high', 'bottle', 'bar'],
-    'Contains a frightening/intense moment?': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death', 'panic', 'fear', 'traumatic', 'shock', 'disturbing', 'graphic', 'gory', 'brutal']
-        }
+        'Contains sex/nudity?': ['nude', 'naked', 'sex', 'breast', 'tit', 'motorboat', 'love scene', 'kiss', 'jiggle', 'buxom', 'breasts', 'lingerie', 'undress', 'strip', 'topless', 'intimate'],
+        'Contains violence?': ['kill', 'shot', 'blood', 'fight', 'punch', 'hit', 'slaughter', 'death', 'die', 'gun', 'shoot', 'bullet', 'stab', 'wound', 'dead', 'murder', 'strangle', 'choke', 'slash', 'knife', 'weapon', 'assault'],
+        'Contains profanity?': ['fuck', 'shit', 'damn', 'hell', 'ass', 'bitch', 'bastard', 'kike', 'goddamn', 'christ', 'jesus', 'crap', 'piss', 'cock', 'dick', 'whore', 'slut'],
+        'Contains alcohol/drugs/smoking?': ['drink', 'drunk', 'beer', 'wine', 'liquor', 'gimlet', 'mai tai', 'smoking', 'cigarette', 'alcohol', 'booze', 'weed', 'joint', 'pill', 'needle', 'inject', 'high', 'bottle', 'bar'],
+        'Contains a frightening/intense moment?': ['scream', 'terror', 'horror', 'frighten', 'intense', 'violent', 'blood', 'kill', 'death', 'panic', 'fear', 'traumatic', 'shock', 'disturbing', 'graphic', 'gory', 'brutal']
+    }
 
+    # Content Flags validation
     flag_validations = {}
     for flag, keywords in content_flags.items():
         has_content, evidence = check_content(scene_text, keywords)
-        qa_has_content = str(qa_row.get(flag, '')).upper() == 'YES'
+        qa_value = str(qa_row.get(flag, '')).upper()
         
-        if has_content != qa_has_content:
+        # Only show discrepancy if QA doesn't match actual content
+        if qa_value == 'YES' and not has_content:
             flag_validations[flag] = {
-                'current': 'YES' if qa_has_content else 'NO',
-                'correct': 'YES' if has_content else 'NO',
+                'current': qa_value,
+                'correct': 'NO',
+                'status': False,
+                'evidence': []
+            }
+        elif qa_value != 'YES' and has_content:
+            flag_validations[flag] = {
+                'current': qa_value,
+                'correct': 'YES',
                 'status': False,
                 'evidence': evidence
             }
-    
     if flag_validations:
         validations['Content Flags'] = flag_validations
-
-    return validations
-
+    return validations  
+        
 def format_validation_report(scene_number, validations):
     """Format validation results to show only actual discrepancies"""
     report = f"\nSCENE {scene_number} ANALYSIS:\n"
@@ -314,10 +330,13 @@ def format_validation_report(scene_number, validations):
                 report += f"Remove: {', '.join(validations['Characters']['extra'])}\n"
 
     if 'Content Flags' in validations:
-        report += "\nContent Flags (Change to YES):\n"
+        report += "\nContent Flags:\n"
         for flag, data in validations['Content Flags'].items():
-            if data['evidence']:
-                report += f"- {flag.replace('?', '')} ({', '.join(data['evidence'])})\n"
+            if data['status'] is False:
+                if data['correct'] == 'YES':
+                    report += f"- Change {flag.replace('?', '')} to YES ({', '.join(data['evidence'])})\n"
+                else:
+                    report += f"- Change {flag.replace('?', '')} to NO\n"
 
     return report
 
