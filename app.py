@@ -88,6 +88,23 @@ def normalize_header(header):
     header = re.sub(r'\s*-\s*(?:CONTINUOUS|MOMENTS LATER|LATER)\s*(?:-|$)', '', header)
     return header
 
+def check_multiple_setups(scene_text, scene_header):
+    """Improved multiple setups detection"""
+    # Check if header explicitly indicates multiple locations
+    if '/' in scene_header:
+        return True
+        
+    # Count unique location changes within scene
+    location_changes = len(set(re.findall(r'(?:INT\.|EXT\.)\s+([^-]+)', scene_text)))
+    
+    # Count time changes that indicate setup changes
+    time_changes = len(set(re.findall(r'-\s+(CONTINUOUS|LATER|MOMENTS LATER)', scene_text)))
+    
+    # Check for FLASHBACK indicators
+    has_flashback = bool(re.search(r'FLASHBACK', scene_text, re.IGNORECASE))
+    
+    return location_changes > 1 or time_changes > 0 or has_flashback
+
 def process_pdf(pdf_file):
     """Extract text from PDF maintaining page numbers"""
     text = ""
@@ -108,25 +125,38 @@ def process_pdf(pdf_file):
     return text, page_mapping
 
 def extract_scene_header(text):
-    """Enhanced scene header extraction with strict validation"""
-    scene_pattern = r'(?m)^(\d+\.\d+)\s+((?:INT\.|EXT\.|INT\./EXT\.|I/E\.?)\s+.*?)\s+-\s+((?:MORNING|DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|AFTERNOON))(?:\s*\([^)]+\))?'
-    match = re.search(scene_pattern, text)
+    """Improved scene header extraction with better pattern matching"""
+    # Match standard scene headers
+    scene_pattern = r'(?m)^(\d+\.\d+)\s+((?:INT\.|EXT\.|INT\./EXT\.|I/E\.?)\s+.*?)\s+-\s+((?:MORNING|DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|AFTERNOON)(?:\s+\([^)]+\))?)'
+    
+    # Match flashback headers
+    flashback_pattern = r'(?m)^(\d+\.\d+)\s+((?:INT\.|EXT\.|INT\./EXT\.|I/E\.?)\s+.*?)\s+(?:-\s+)?(?:.*?)(?:\s*-\s*)?(?:FLASHBACK)'
+    
+    match = re.search(scene_pattern, text) or re.search(flashback_pattern, text)
+    
     if match:
         header_text = match.group(0).split('\n')[0].strip()
         location = match.group(2).strip()
+        
+        # Handle multiple locations
         locations = []
-        if ' - ' in location:
-            locations = [loc.strip() for loc in location.split(' - ')]
-        if len(header_text) > 200:
+        if '/' in location:
+            locations = [loc.strip() for loc in location.split('/')]
+        else:
+            locations = [location]
+            
+        if len(header_text) > 200:  # Sanity check
             return None
+            
         return {
             'scene_number': match.group(1),
             'int_ext': match.group(2).split()[0].strip('.'),
-            'location': locations or [location],
-            'time': match.group(3).strip(),
+            'location': locations,
+            'time': match.group(3).strip() if len(match.groups()) > 2 else 'FLASHBACK',
             'full_header': header_text,
             'raw_match': match.group(0)
         }
+        
     return None
 
 def process_with_error_recovery(script_file, qa_file):
@@ -136,37 +166,53 @@ def process_with_error_recovery(script_file, qa_file):
     script_scenes = {}
     qa_rows = []
     
+    # Initialize progress bar
+    progress_bar = st.progress(0)
+    total_steps = 3  # PDF processing, scene extraction, QA validation
+    current_step = 0
+    
     try:
         # Process script PDF
+        progress_bar.progress(current_step / total_steps)
         script_text, page_mapping = process_pdf(script_file)
         if not script_text:
             errors.append("Failed to extract text from script PDF")
+            progress_bar.empty()
             return None, None, warnings, errors
+        current_step += 1
             
         # Extract scenes from script
+        progress_bar.progress(current_step / total_steps)
         script_scenes = split_into_scenes(script_text)
         if not script_scenes:
             errors.append("No valid scenes found in script")
+            progress_bar.empty()
             return None, None, warnings, errors
-
+        current_step += 1
+        
         # Process QA sheet
+        progress_bar.progress(current_step / total_steps)
         try:
             qa_data = pd.read_csv(qa_file)
             validate_qa_sheet(qa_data)
             qa_rows = qa_data.to_dict('records')
         except Exception as e:
             errors.append(f"Error processing QA sheet: {str(e)}")
+            progress_bar.empty()
             return None, None, warnings, errors
-
+            
         # Basic validation
         if len(script_scenes) == 0:
             warnings.append("No scenes found in script")
         if len(qa_rows) == 0:
             warnings.append("No rows found in QA sheet")
-
+            
+        progress_bar.empty()  # Clear progress bar on success
         return script_scenes, qa_rows, warnings, errors
+        
     except Exception as e:
         errors.append(f"Unexpected error: {str(e)}\n{traceback.format_exc()}")
+        progress_bar.empty()  # Clear progress bar on error
         return None, None, warnings, errors
 
 def split_into_scenes(script_text):
@@ -200,22 +246,26 @@ def split_into_scenes(script_text):
 def extract_scene_characters(text):
     """Enhanced character extraction with contextual validation"""
     characters = set()
-    character_groups = {
-        'MOVIEGOERS': ['MOVIEGOERS of all ages', 'MOVIEGOERS'],
-        'MOURNERS': ['MOURNERS', 'GROUP OF MOURNERS'],
-        'COPS': ['COPS', 'POLICE OFFICERS', 'OFFICERS']
-    }
     
-    character_pattern = r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?:\s*\((?:[^)]+)\))?\s*\n'
-    for match in re.finditer(character_pattern, text, re.MULTILINE):
-        name = match.group(1).strip()
-        if (len(name.split()) <= 3 and
-            not any(fp in name for fp in ['FP']) and
-            not re.search(r'\d', name) and
-            len(name) >= 2 and
-            len(name) <= 30):
-            characters.add(name)
+    # Match character cues in dialogue
+    character_pattern = r'(?:^|\n)([A-Z][A-Z\s\'\-]+)(?:\s*\([^)]+\))?\s*\n'
+    
+    # Also match character names in action lines
+    action_pattern = r'\b([A-Z][A-Z\s\'\-]{1,20})\b'
+    
+    # Combine matches from both patterns
+    for pattern in [character_pattern, action_pattern]:
+        for match in re.finditer(pattern, text, re.MULTILINE):
+            name = match.group(1).strip()
             
+            # Validate character name
+            if (len(name.split()) <= 3 and
+                not any(x in name for x in ['CONT', 'CUT', 'FADE']) and
+                not re.search(r'\d', name) and
+                len(name) >= 2 and
+                len(name) <= 30):
+                characters.add(name)
+    
     return sorted(list(characters))
 
 def calculate_scene_length(text):
@@ -223,44 +273,66 @@ def calculate_scene_length(text):
     def count_action_lines(lines):
         count = 0
         for line in lines:
-            if not re.match(r'^CONTINUED:|^CONT\'D:', line):
-                if not line.strip().startswith('(') and not re.match(r'^[A-Z\s]+$', line):
+            # Don't count continued markers or parentheticals
+            if not re.match(r'^(?:CONTINUED:|CONT\'D:|\()', line.strip()):
+                # Count dialogue and action lines
+                if not re.match(r'^[A-Z\s]+$', line.strip()):
                     count += 1
         return count
 
-    lines = [l for l in text.split('\n') if l.strip() and not any(x in l for x in ['FADE OUT', 'CUT TO:', 'DISSOLVE TO:'])]
+    # Split into lines and filter out transitions
+    lines = [l for l in text.split('\n') if l.strip() and 
+            not any(x in l for x in ['FADE OUT', 'CUT TO:', 'DISSOLVE TO:'])]
+    
+    # Count dialogue and action lines
     action_lines = count_action_lines(lines)
+    
+    # Calculate eighths (8 lines = 1 page = 8/8)
     total_lines = action_lines + (len(lines) - action_lines) * 0.75
-    eighths = max(1, round((total_lines / 8) * 8) / 8)
-    return str(int(eighths))
+    eighths = round((total_lines / 8) * 8) / 8
+    
+    # Format as fraction
+    whole = int(eighths)
+    fraction = eighths - whole
+    if fraction == 0:
+        return str(whole)
+    else:
+        return f"{whole} {int(fraction * 8)}/8"
 
 def validate_content_flags(scene_text, qa_row):
-    """Enhanced content flag validation with context awareness"""
+    """Enhanced content flag validation with better context awareness"""
     validations = {}
+    
+    # Convert scene text to lowercase for matching
+    text_lower = scene_text.lower()
+    
     for flag, keywords in CONTENT_FLAGS.items():
         qa_value = str(qa_row.get(FLAG_TO_COLUMN[flag], '')).upper()
         has_content = False
         evidence = []
         
+        # Check direct keyword matches
         for keyword in keywords:
-            matches = re.finditer(rf'\b{re.escape(keyword.lower())}\b', scene_text.lower())
+            matches = re.finditer(rf'\b{re.escape(keyword.lower())}\b', text_lower)
             for match in matches:
                 start = max(0, match.start() - 100)
-                end = min(len(scene_text), match.end() + 100)
-                context = scene_text[start:end]
+                end = min(len(text_lower), match.end() + 100)
+                context = text_lower[start:end]
+                
+                # Exclude matches in scene directions or transitions
                 if not re.search(r'\([^)]*' + re.escape(keyword.lower()) + r'[^)]*\)', context):
                     has_content = True
                     evidence.append({
                         'keyword': keyword,
                         'context': context.strip()
                     })
-
-        if not evidence and has_content:
-            evidence.append({
-                'keyword': 'unknown',
-                'context': 'Content detected but context unavailable'
-            })
-
+        
+        # Check for implied content based on context
+        implied_content = check_implied_content(text_lower, flag)
+        if implied_content:
+            has_content = True
+            evidence.extend(implied_content)
+        
         if qa_value != ('YES' if has_content else 'NO'):
             validations[flag] = {
                 'current': qa_value,
@@ -271,34 +343,116 @@ def validate_content_flags(scene_text, qa_row):
             
     return validations
 
+def check_implied_content(text, flag):
+    """Check for implied content based on context"""
+    evidence = []
+    
+    # Sexual content implications
+    if flag == 'Contains sex / nudity?':
+        if re.search(r'dick|naked|undress|strip|topless', text):
+            evidence.append({
+                'keyword': 'implied sexual content',
+                'context': 'Sexual references or implications in dialogue/action'
+            })
+            
+    # Violence implications
+    elif flag == 'Contains violence?':
+        if re.search(r'threaten|attack|fight|weapon|blood|wound', text):
+            evidence.append({
+                'keyword': 'implied violence',
+                'context': 'Violent actions or threats described'
+            })
+            
+    # Profanity implications
+    elif flag == 'Contains profanity?':
+        if re.search(r'curse|swear|obscene|profane', text):
+            evidence.append({
+                'keyword': 'implied profanity',
+                'context': 'Referenced use of strong language'
+            })
+            
+    # Substance use implications
+    elif flag == 'Contains alcohol / drugs / smoking?':
+        if re.search(r'drunk|high|intoxicated|substance|smoke', text):
+            evidence.append({
+                'keyword': 'implied substance use',
+                'context': 'References to substance use or effects'
+            })
+            
+    # Frightening content implications
+    elif flag == 'Contains a frightening / intense moment?':
+        if re.search(r'scary|terrify|horrify|intense|disturbing', text):
+            evidence.append({
+                'keyword': 'implied intense content',
+                'context': 'Descriptions of frightening or intense situations'
+            })
+            
+    return evidence
+
+def validate_scene_details(scene_text, qa_row):
+    """Validate scene details including characters, length, and content flags"""
+    validations = {}
+    
+    # Validate characters
+    script_characters = set(extract_scene_characters(scene_text))
+    qa_characters = {char.strip() for char in str(qa_row.get('Characters Present in Scene', '')).split(',') if char.strip()}
+    
+    script_characters = {re.sub(r'\s+', ' ', name).strip() for name in script_characters}
+    qa_characters = {re.sub(r'\s+', ' ', name).strip() for name in qa_characters}
+    
+    missing_chars = qa_characters - script_characters
+    extra_chars = script_characters - qa_characters
+    
+    if missing_chars or extra_chars:
+        validations['Characters'] = {
+            'missing': sorted(list(missing_chars)),
+            'extra': sorted(list(extra_chars)),
+            'status': False
+        }
+    
+    # Validate scene length
+    scene_length = str(qa_row.get('Scene length \n(in eighths)', '')).strip()
+    script_length = calculate_scene_length(scene_text)
+    if scene_length != script_length:
+        validations['Scene length'] = {
+            'current': scene_length,
+            'correct': script_length,
+            'status': False
+        }
+    
+    # Validate content flags
+    flag_validations = validate_content_flags(scene_text, qa_row)
+    if flag_validations:
+        validations['Content Flags'] = flag_validations
+    
+    return validations
+
 def validate_scene(scene_text, qa_row):
-    """Validate scene against QA sheet"""
+    """Enhanced scene validation with improved accuracy"""
     validations = {}
     
     if scene_text == "OMITTED":
         return {"status": "OMITTED"}
         
     try:
+        # Extract and validate scene header
         scene_header = extract_scene_header(scene_text)
         if not scene_header:
             return {"error": "Could not parse scene header"}
-
+            
         # Validate scene header
         qa_header = str(qa_row.get('Full scene header (excluding scene number)', '')).strip()
-        script_header = scene_header['full_header'].replace(f"{scene_header['scene_number']} ", '').strip()
-        script_header = re.sub(r'\s*-\s*(?:CONTINUOUS|MOMENTS LATER|LATER)\s*(?:-|$)', '', script_header)
+        script_header = normalize_header(scene_header['full_header'].replace(f"{scene_header['scene_number']} ", ''))
         
-        if script_header != qa_header:
+        if script_header != normalize_header(qa_header):
             validations['Full scene header'] = {
                 'current': qa_header,
                 'correct': script_header,
                 'status': False
             }
-
+            
         # Validate multiple setups
-        location_changes = len(set(re.findall(r'(?:INT\.|EXT\.)\s+([^-]+)', scene_text)))
-        time_changes = len(set(re.findall(r'-\s+(CONTINUOUS|LATER|MOMENTS LATER)', scene_text)))
-        has_multiple = location_changes > 1 or time_changes > 0
+        has_multiple = check_multiple_setups(scene_text, script_header)
         qa_multiple = str(qa_row.get('Has Multiple Setups', '')).upper() == 'YES'
         
         if has_multiple != qa_multiple:
@@ -307,7 +461,7 @@ def validate_scene(scene_text, qa_row):
                 'correct': 'YES' if has_multiple else 'NO',
                 'status': False
             }
-
+            
         # Validate interior/exterior
         is_int = 'INT' in scene_header['int_ext']
         is_ext = 'EXT' in scene_header['int_ext']
@@ -329,40 +483,12 @@ def validate_scene(scene_text, qa_row):
             }
         if int_ext_validations:
             validations['Interior/Exterior'] = int_ext_validations
-
-        # Validate characters
-        script_characters = set(extract_scene_characters(scene_text))
-        qa_characters = {char.strip() for char in str(qa_row.get('Characters Present in Scene', '')).split(',') if char.strip()}
+            
+        # Add other validations (characters, length, content flags)
+        validations.update(validate_scene_details(scene_text, qa_row))
         
-        script_characters = {re.sub(r'\s+', ' ', name).strip() for name in script_characters}
-        qa_characters = {re.sub(r'\s+', ' ', name).strip() for name in qa_characters}
-        
-        missing_chars = qa_characters - script_characters
-        extra_chars = script_characters - qa_characters
-        
-        if missing_chars or extra_chars:
-            validations['Characters'] = {
-                'missing': sorted(list(missing_chars)),
-                'extra': sorted(list(extra_chars)),
-                'status': False
-            }
-
-        # Validate scene length
-        scene_length = str(qa_row.get('Scene length (in eighths)', '')).strip()
-        script_length = calculate_scene_length(scene_text)
-        if scene_length != script_length:
-            validations['Scene length'] = {
-                'current': scene_length,
-                'correct': script_length,
-                'status': False
-            }
-
-        # Validate content flags
-        flag_validations = validate_content_flags(scene_text, qa_row)
-        if flag_validations:
-            validations['Content Flags'] = flag_validations
-
         return validations
+        
     except Exception as e:
         return {"error": f"Validation error: {str(e)}"}
 
