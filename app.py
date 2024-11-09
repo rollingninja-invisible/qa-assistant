@@ -109,11 +109,11 @@ def process_pdf(pdf_file):
 
 def extract_scene_header(text):
     """Enhanced scene header extraction with strict validation"""
-    scene_pattern = r'(?m)^(\d+[A-Z]?)\s+((?:INT\.|EXT\.)|(?:INT\./EXT\.)|(?:I/E\.?))\s+(.*?)\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|MORNING|AFTERNOON)(?:\s*\([^)]+\))?'
+    scene_pattern = r'(?m)^(\d+\.\d+)\s+((?:INT\.|EXT\.|INT\./EXT\.|I/E\.?)\s+.*?)\s+-\s+((?:MORNING|DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|AFTERNOON))(?:\s*\([^)]+\))?'
     match = re.search(scene_pattern, text)
     if match:
         header_text = match.group(0).split('\n')[0].strip()
-        location = match.group(3).strip()
+        location = match.group(2).strip()
         locations = []
         if ' - ' in location:
             locations = [loc.strip() for loc in location.split(' - ')]
@@ -121,9 +121,9 @@ def extract_scene_header(text):
             return None
         return {
             'scene_number': match.group(1),
-            'int_ext': match.group(2).strip('.'),
-            'location': locations,
-            'time': match.group(4).strip(),
+            'int_ext': match.group(2).split()[0].strip('.'),
+            'location': locations or [location],
+            'time': match.group(3).strip(),
             'full_header': header_text,
             'raw_match': match.group(0)
         }
@@ -171,18 +171,19 @@ def process_with_error_recovery(script_file, qa_file):
 
 def split_into_scenes(script_text):
     """Split script text into individual scenes"""
-    scene_pattern = r'(\d+[A-Z]?)\s+((?:INT\.|EXT\.)|(?:INT\./EXT\.)|(?:I/E\.?))\s+(.*?)\s+-\s+(DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|MORNING|AFTERNOON)'
+    # Updated pattern to match scene numbers like "1.1" and capture the full header
+    scene_pattern = r'(\d+\.\d+)\s+((?:INT\.|EXT\.|INT\./EXT\.|I/E\.?)\s+.*?)\s+-\s+(?:MORNING|DAY|NIGHT|CONTINUOUS|LATER|MOMENTS LATER|MIDDLE OF THE NIGHT|PRE-DAWN|DUSK|DAWN|EVENING|AFTERNOON)(?:\s+\([^)]+\))?'
     scenes = {}
     
     # Handle omitted scenes
-    omitted_pattern = r'(\d+[A-Z]?)\s+(?:OMITTED)'
+    omitted_pattern = r'(\d+\.\d+)\s+(?:OMITTED)'
     omitted_matches = re.finditer(omitted_pattern, script_text)
     for match in omitted_matches:
         scene_num = match.group(1)
         scenes[scene_num] = "OMITTED"
 
     # Process regular scenes
-    matches = list(re.finditer(scene_pattern, script_text))
+    matches = list(re.finditer(scene_pattern, script_text, re.MULTILINE))
     for i in range(len(matches)):
         start = matches[i].start()
         if i == len(matches) - 1:
@@ -190,8 +191,8 @@ def split_into_scenes(script_text):
         else:
             end = matches[i + 1].start()
         scene_text = script_text[start:end].strip()
-        scene_num = matches[i].group(1)
-        if len(scene_text) > 50:
+        scene_num = matches[i].group(1)  # This will capture "1.1", "1.2", etc.
+        if len(scene_text) > 50:  # Minimum length check to avoid false positives
             scenes[scene_num] = scene_text
             
     return scenes
