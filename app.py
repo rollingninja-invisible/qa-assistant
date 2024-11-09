@@ -58,10 +58,10 @@ CONTENT_FLAGS = {
 # Content flag column mappings
 FLAG_TO_COLUMN = {
     'Contains sex / nudity?': 'Contains sex / nudity? ',
-    'Contains violence?': 'Contains violence? ',
+    'Contains violence?': 'Contains violence?',
     'Contains profanity?': 'Contains profanity? ',
     'Contains alcohol / drugs / smoking?': 'Contains alcohol / drugs / smoking? ',
-    'Contains a frightening / intense moment?': 'Contains a frightening / intense moment? '
+    'Contains a frightening / intense moment?': 'Contains a frightening / intense moment?'
 }
 
 def check_content(text, keywords):
@@ -375,7 +375,7 @@ def validate_qa_sheet(qa_data):
         'Characters Present in Scene': [
             'Characters Present in Scene'
         ],
-        'Scene length (in eighths)': [
+        'Scene length \n(in eighths)': [
             'Scene length \n(in eighths)',
             'Scene length (in eighths)'
         ],
@@ -383,16 +383,15 @@ def validate_qa_sheet(qa_data):
         'Has interior?': ['Has interior?'],
         'Has exterior? ': ['Has exterior? '],
         'Contains sex / nudity? ': ['Contains sex / nudity? '],
-        'Contains violence? ': [
-            'Contains violence?',
-            'Contains violence? '
+        'Contains violence?': [
+            'Contains violence?'
         ],
         'Contains profanity? ': ['Contains profanity? '],
         'Contains alcohol / drugs / smoking? ': [
             'Contains alcohol / drugs / smoking? '
         ],
-        'Contains a frightening / intense moment? ': [
-            'Contains a frightening / intense moment? '
+        'Contains a frightening / intense moment?': [
+            'Contains a frightening / intense moment?'
         ]
     }
 
@@ -416,42 +415,96 @@ def validate_qa_sheet(qa_data):
     if column_rename:
         qa_data.rename(columns=column_rename, inplace=True)
 
-    # Validate scene numbers
-    for idx, row in qa_data.iterrows():
-        scene_num = str(row['Scene #']).strip()
-        if not re.match(r'^\d+[A-Z]?$', scene_num):
-            raise ValueError(f"Invalid scene number format in row {idx + 1}: {scene_num}")
-
-    # Validate YES/NO fields
-    boolean_columns = [
-        'Has Multiple Setups',
-        'Has interior?',
-        'Has exterior? ',
-        'Contains sex / nudity? ',
-        'Contains violence? ',
-        'Contains profanity? ',
-        'Contains alcohol / drugs / smoking? ',
-        'Contains a frightening / intense moment? '
-    ]
-
-    for col in boolean_columns:
-        if col in qa_data.columns:
-            invalid_values = qa_data[col].dropna().apply(lambda x: str(x).upper() not in ['YES', 'NO'])
-            if invalid_values.any():
-                invalid_rows = invalid_values[invalid_values].index + 1
-                raise ValueError(f"Invalid values in column '{col}' at rows: {list(invalid_rows)}. Must be YES or NO")
-
-    # Validate scene length format
-    if 'Scene length (in eighths)' in qa_data.columns:
-        invalid_lengths = qa_data['Scene length (in eighths)'].dropna().apply(
-            lambda x: not str(x).strip().isdigit()
-        )
-        if invalid_lengths.any():
-            invalid_rows = invalid_lengths[invalid_lengths].index + 1
-            raise ValueError(f"Invalid scene lengths at rows: {list(invalid_rows)}. Must be numeric values")
-
     return True
+def format_validation_report(scene_number, validations):
+    """Format validation results to show only actual discrepancies"""
+    report = f"\nSCENE {scene_number} ANALYSIS:\n"
     
+    if "error" in validations:
+        return report + f"Error: {validations['error']}\n"
+        
+    if validations.get("status") == "OMITTED":
+        return report + "Scene marked as OMITTED\n"
+        
+    if not validations:
+        report += "✅ All fields verified correct\n"
+        return report
+        
+    report += "Required Updates:\n"
+    
+    if 'Full scene header' in validations:
+        report += f"\nFull scene header\n"
+        report += f"Current: {validations['Full scene header']['current']}\n"
+        report += f"Should be: {validations['Full scene header']['correct']}\n"
+        
+    if 'Has Multiple Setups' in validations:
+        report += f"\nHas Multiple Setups\n"
+        report += f"Current: {validations['Has Multiple Setups']['current']}\n"
+        report += f"Should be: {validations['Has Multiple Setups']['correct']}\n"
+        
+    if 'Interior/Exterior' in validations:
+        report += "\nInterior/Exterior Settings\n"
+        if 'has_interior' in validations['Interior/Exterior']:
+            report += f"Set \"Has interior?\" to: {validations['Interior/Exterior']['has_interior']['correct']}\n"
+        if 'has_exterior' in validations['Interior/Exterior']:
+            report += f"Set \"Has exterior?\" to: {validations['Interior/Exterior']['has_exterior']['correct']}\n"
+            
+    if 'Scene length' in validations:
+        report += f"\nScene length\n"
+        report += f"Current: {validations['Scene length']['current']}\n"
+        report += f"Should be: {validations['Scene length']['correct']}\n"
+        
+    if 'Characters' in validations:
+        if validations['Characters']['missing'] or validations['Characters']['extra']:
+            report += "\nCharacters Present\n"
+            if validations['Characters']['missing']:
+                report += f"Add: {', '.join(validations['Characters']['missing'])}\n"
+            if validations['Characters']['extra']:
+                report += f"Remove: {', '.join(validations['Characters']['extra'])}\n"
+                
+    if 'Content Flags' in validations:
+        report += "\nContent Flags:\n"
+        for flag, data in validations['Content Flags'].items():
+            if data['status'] is False:
+                if data['evidence']:
+                    evidence_text = ', '.join([f"{e['keyword']} ({e['context'][:50]}...)" for e in data['evidence'][:2]])
+                    report += f"- Change {flag.replace('?', '')} to {data['correct']} (Found: {evidence_text})\n"
+                else:
+                    report += f"- Change {flag.replace('?', '')} to {data['correct']}\n"
+                    
+    return report
+
+def generate_validation_summary(validations_by_scene):
+    """Generate detailed validation summary with statistics"""
+    summary = {
+        'total_scenes': len(validations_by_scene),
+        'scenes_with_issues': 0,
+        'issues_by_type': defaultdict(int),
+        'critical_issues': [],
+        'validation_evidence': {}
+    }
+    
+    for scene_num, validations in validations_by_scene.items():
+        if validations and not validations.get('status') == 'OMITTED':
+            has_issues = False
+            
+            for issue_type, details in validations.items():
+                if issue_type != 'error' and issue_type != 'status':
+                    summary['issues_by_type'][issue_type] += 1
+                    has_issues = True
+                    
+                    if issue_type in ['Characters', 'Full scene header']:
+                        summary['critical_issues'].append({
+                            'scene': scene_num,
+                            'type': issue_type,
+                            'details': details
+                        })
+                        
+            if has_issues:
+                summary['scenes_with_issues'] += 1
+                
+    return summary
+
 # Main Streamlit interface
 st.title("Script QA Assistant")
 
